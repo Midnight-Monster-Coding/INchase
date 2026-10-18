@@ -435,11 +435,6 @@
       <div id="modeBar" class="flex flex-wrap items-center gap-1.5 mr-auto" role="group" aria-label="Game mode">
         <button type="button" data-mode="arcade" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">ARCADE</button>
         <button type="button" data-mode="blitz" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">BLITZ</button>
-        <button type="button" data-mode="swarm" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">SWARM</button>
-        <button type="button" data-mode="rain" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">RAIN</button>
-        <button type="button" data-mode="prism" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">PRISM</button>
-        <button type="button" data-mode="weave" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">WEAVER</button>
-        <button type="button" data-mode="titan" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">TITAN</button>
       </div>
       <button id="audioToggleBtn" type="button" class="retro-key px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5" title="Toggle Synth Audio">
         <span id="audioDot" class="w-3 h-3 rounded-full border-2 border-black bg-emerald-400"></span>
@@ -577,10 +572,10 @@
         <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">RED</span> Stay away. A hit costs one shield. Each wave sends a fixed number of drones. A red marker on the edge warns you 0.6 seconds before one appears. Drones fade away after about 9 seconds, and a short calm between waves clears the box.</li>
         <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#FBBF24">SHARD</span> A broken drone drops a gold shard. Grab it for +15 points. Shards are never multiplied.</li>
         <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GRAZE</span> Skim close to a red drone without touching it for +10 points, up to 3 times per drone.</li>
-        <li><span class="nb-pill c-lime" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">MODES</span> Pick a mode with the buttons above the arena before you start. ARCADE is endless with a random twist each wave. BLITZ is 90 seconds. SWARM is all seekers. RAIN is fast drifters and needle darts. PRISM keeps the green target moving. WEAVER is snaking triangle darts. TITAN is huge hexagons and lunging needles. Only ARCADE counts for the leaderboard. Every other mode keeps its own best on this device.</li>
-        <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">SHAPES</span> Diamonds drift. Arrows chase you. Spiked cores are slow. Triangles snake side to side. Big hexagons are slow but wide. Thin needles creep, then lunge. Sizes vary a little. All red shapes cost a shield.</li>
-        <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">TWIST</span> Every wave has a twist, shown as a banner, such as SEEKER SWARM or MOVING PRISM. Every 5th wave adds a big boss drone. At 0 shields, time slows once per wave when a drone is about to hit you.</li>
-        <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">BLITZ</span> A 90 second timed run. Pick it with the mode buttons above the arena. Its best score is kept separate from arcade.</li>
+        <li><span class="nb-pill c-lime" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">MODES</span> ARCADE is the normal endless mode. BLITZ is a 90 second run with a new twist every wave. Pick one with the buttons above the arena before you start. Only ARCADE counts for the leaderboard. Blitz keeps its own best on this device.</li>
+        <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">SHAPES</span> Diamonds drift. Arrows chase you. Spiked cores are slow. In Blitz, triangles snake side to side, big hexagons are slow but wide, thin needles creep then lunge, and sizes vary a little. All red shapes cost a shield.</li>
+        <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">LAST CHANCE</span> At 0 shields, time slows once per wave when a drone is about to hit you.</li>
+        <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">BLITZ</span> A 90 second timed run. Every wave brings a new twist, shown as a banner: SEEKER SWARM, DRIFTER RAIN, SPIKE FIELD, MOVING PRISM, WEAVER WAVE or TITAN WAVE. Every 5th wave adds a big boss drone. Its best score is kept separate from arcade.</li>
         <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A78BFA">OUTER</span> <span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A3E635">INNER</span> You have 2 shield rings. The violet outer ring breaks first, then the lime inner ring. A hit with no ring left ends the run. Both rings come back at every new wave.</li>
         <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GHOST</span> Fills from greens, grazes and broken drones. It cannot refill while it is running. <span class="desk-only">Press E or wheel click when full.</span><span class="mob-only">Tap GHOST when full.</span></li>
         <li><span class="desk-only">Move with mouse, WASD or arrows. P to pause.</span><span class="mob-only">Move with the stick. Use the button under it to switch to arrows.</span></li>
@@ -1474,25 +1469,21 @@
         { name: 'WEAVER WAVE', mix: [[4, 0.7], [0, 0.2], [1, 0.1]], spd: 1 },
         { name: 'TITAN WAVE', mix: [[5, 0.4], [6, 0.35], [0, 0.25]], spd: 1 }
       ];
-      // Modes that lock one twist for the whole run (arcade and blitz pick a random twist per wave)
-      const MODE_TWIST = { swarm: 1, rain: 2, prism: 4, weave: 5, titan: 6 };
       function pickTwist(w) {
-        const lock = MODE_TWIST[Game.mode];
-        if (lock !== undefined) return TWISTS[lock];
-        if (w < 2) return TWISTS[0];
+        // Arcade stays plain. Blitz gets a new random twist every wave, starting with wave 1.
+        if (Game.mode !== 'blitz') return TWISTS[0];
         let t;
         do { t = TWISTS[1 + ((Math.random() * (TWISTS.length - 1)) | 0)]; } while (t === Game.twist);
         return t;
       }
       function startWave(w) {
-        const locked = MODE_TWIST[Game.mode] !== undefined;
         Game.twist = pickTwist(w);
         Game.waveBudget = waveBudgetFor(w);
-        Game.bossPending = w % 5 === 0;
+        Game.bossPending = Game.mode === 'blitz' && w % 5 === 0;
         Game.slowUsed = false;
-        Game.bannerText = Game.bossPending ? 'BOSS WAVE' : (locked && w > 1 ? '' : Game.twist.name);
+        Game.bannerText = Game.bossPending ? 'BOSS WAVE' : Game.twist.name;
         Game.bannerSub = 'WAVE ' + w + (Game.bossPending && Game.twist.name ? ' \u00B7 ' + Game.twist.name : '');
-        Game.bannerT = (Game.bannerText || w > 1) ? 2.2 : 0;
+        Game.bannerT = (Game.mode === 'blitz' && Game.bannerText) ? 2.2 : 0;
         if (Game.twist.prism) {
           const ang = Math.random() * Math.PI * 2;
           Prism.vx = Math.cos(ang) * 60;
@@ -1532,7 +1523,7 @@
         else if (type === 4) { r = 10; spd = 105 + Math.min(w * 6, 70); }
         else if (type === 5) { r = 19 + Math.random() * 8; spd = 38; }
         else { r = 6 + Math.random() * 2.5; spd = 200 + Math.min(w * 6, 60); }
-        if (type === 0 || type === 1 || type === 4) r *= 0.85 + Math.random() * 0.35;  // size variety
+        if (Game.mode === 'blitz' && (type === 0 || type === 1 || type === 4)) r *= 0.85 + Math.random() * 0.35;  // size variety
         spd *= tw.spd;
         const id = spawnEntity(type, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, r);
         if (id >= 0) entLife[id] = HAZARD_LIFE_MIN + Math.random() * HAZARD_LIFE_VAR;
