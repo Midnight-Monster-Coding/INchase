@@ -487,6 +487,31 @@
     </div>
   </div>
 
+  <!-- ==================== FIREBASE (CDN, no bundler needed) ==================== -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
+    import { getAnalytics, isSupported } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-analytics.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyB4XrRiVfKwBB0vpNQVp3owB4kIdcpX9Q0",
+      authDomain: "inchase.firebaseapp.com",
+      projectId: "inchase",
+      storageBucket: "inchase.firebasestorage.app",
+      messagingSenderId: "899688378990",
+      appId: "1:899688378990:web:0e9e0f583cf38686ef6c7f",
+      measurementId: "G-V9ETESWC9E"
+    };
+
+    try {
+      const app = initializeApp(firebaseConfig);
+      window.firebaseApp = app;
+      // Analytics only works on https / supported browsers; fail silently otherwise
+      isSupported().then((ok) => { if (ok) getAnalytics(app); }).catch(() => {});
+    } catch (err) {
+      console.warn('Firebase init skipped:', err);
+    }
+  </script>
+
   <!-- ==================== GAME ENGINE & APPLICATION SCRIPT ==================== -->
   <script>
     (function () {
