@@ -338,6 +338,69 @@
     #accountBtnM { padding: 0; overflow: hidden; }
     .mob #accountBtnM { width: 34px; height: 34px; box-shadow: 3px 3px 0 var(--ink); }
     #mAvatar { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; font-size: 14px; }
+
+    /* ---------- Leaderboard ---------- */
+    .lb-off { display: none !important; }
+    .mob-block { display: none; }
+    .mob .mob-block { display: block; }
+    :root {
+      --lb-row: 30px; --lb-gap: 4px;
+      /* exactly four rows visible: 4 rows + 3 gaps + room for the row shadow */
+      --lb-max: calc(var(--lb-row) * 4 + var(--lb-gap) * 3 + 3px);
+    }
+    .lb-tabs { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; padding-top: 8px; border-top: 3px solid var(--rule); flex: 0 0 auto; }
+    .lb-tab {
+      background: var(--paper); color: var(--text); border: 2px solid var(--ink); border-radius: 8px;
+      box-shadow: 2px 2px 0 var(--ink); font-size: 10px; letter-spacing: 0.08em; padding: 4px 0; cursor: pointer;
+      transition: transform 0.08s ease, box-shadow 0.08s ease; font-family: inherit;
+    }
+    .lb-tab.active { background: var(--cyan); color: #0A0A0A; }
+    .lb-tab:active { transform: translate(2px, 2px); box-shadow: 0 0 0 var(--ink); }
+    .lb-tab.sq { width: 30px; padding: 3px 0; font-size: 14px; line-height: 1; }
+    .lb-pane { display: flex; flex-direction: column; gap: 6px; flex: 1 1 0; min-height: 0; }
+    .lb-list {
+      display: flex; flex-direction: column; gap: var(--lb-gap);
+      flex: 0 1 auto; min-height: 0; max-height: var(--lb-max);
+      overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
+      padding: 0 5px 3px 0; scrollbar-width: thin; scrollbar-color: var(--hard) transparent;
+    }
+    .lb-list::-webkit-scrollbar { width: 8px; }
+    .lb-list::-webkit-scrollbar-thumb { background: var(--hard); border-radius: 6px; }
+    .lb-me { flex: 0 0 auto; border-top: 3px dashed var(--rule); padding: 6px 5px 3px 0; }
+    .lb-row {
+      display: grid; grid-template-columns: 32px calc(var(--lb-row) - 8px) minmax(0, 1fr) auto;
+      align-items: center; gap: 7px; height: var(--lb-row); flex: 0 0 auto;
+      border: 2px solid var(--ink); border-radius: 8px; background: var(--paper); color: var(--text);
+      padding: 0 7px 0 4px; box-shadow: 2px 2px 0 var(--ink);
+    }
+    .lb-row.me { background: var(--cyan); color: #0A0A0A; }
+    .lb-rank {
+      display: flex; align-items: center; justify-content: center; overflow: hidden;
+      height: calc(var(--lb-row) - 12px); border: 2px solid var(--ink); border-radius: 6px;
+      background: var(--white); color: var(--text); font-size: 10px; line-height: 1;
+    }
+    .lb-rank.long { font-size: 8px; }
+    .lb-rank.r1 { background: var(--orange); color: #0A0A0A; }
+    .lb-rank.r2 { background: #CBD5E1; color: #0A0A0A; }
+    .lb-rank.r3 { background: #FB923C; color: #0A0A0A; }
+    .lb-row.me .lb-rank:not(.r1):not(.r2):not(.r3) { background: #FFFFFF; color: #0A0A0A; }
+    .lb-av.chip-avatar { width: calc(var(--lb-row) - 8px); height: calc(var(--lb-row) - 8px); border-width: 2px; font-size: 10px; }
+    .lb-name {
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-weight: 700; font-size: 12px;
+    }
+    .lb-score { font-size: 11px; white-space: nowrap; }
+    .lb-note { font-size: 10px; opacity: 0.7; padding: 6px 2px; text-align: center; line-height: 1.4; }
+    .lb-modal-box { margin-top: 14px; text-align: left; }
+    .lb-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 11px; letter-spacing: 0.1em; }
+    #board.has-tabs .hist-title { display: none; }
+    /* Short screens: give the list the room (the page never scrolls on desktop) */
+    @media (max-height: 770px) {
+      :root { --lb-row: 28px; }
+      html:not(.mob) #board.has-tabs .board-label,
+      html:not(.mob) #board.has-tabs .board-hints { display: none; }
+      html:not(.mob) #board.has-tabs #hudScore { font-size: 34px; }
+    }
   </style>
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
@@ -433,8 +496,19 @@
             <span id="hudShieldM" class="nb-pill c-pink">SHIELDS: 2</span>
           </div>
           <div class="board-hist flex flex-col gap-2.5 flex-1 min-h-0">
-            <div class="hist-title text-[11px] tracking-widest pt-1">MATCH HISTORY</div>
-            <div id="historyList" class="flex-1 min-h-[60px] overflow-y-auto space-y-1.5 pr-1 pb-1"></div>
+            <div id="boardTabs" class="lb-tabs lb-off">
+              <button id="tabRanks" type="button" class="lb-tab active">RANKS</button>
+              <button id="tabHistory" type="button" class="lb-tab">HISTORY</button>
+              <button type="button" class="lb-tab sq" data-lb-refresh title="Refresh leaderboard" aria-label="Refresh leaderboard">&#8635;</button>
+            </div>
+            <div id="rankPane" data-lb class="lb-pane lb-off">
+              <div class="lb-list" role="list"></div>
+              <div class="lb-me lb-off"></div>
+            </div>
+            <div id="historyPane" class="flex flex-col gap-2.5 flex-1 min-h-0">
+              <div class="hist-title text-[11px] tracking-widest pt-1">MATCH HISTORY</div>
+              <div id="historyList" class="flex-1 min-h-[60px] overflow-y-auto space-y-1.5 pr-1 pb-1"></div>
+            </div>
           </div>
         </aside>
       </div>
@@ -507,6 +581,16 @@
         <div id="bestValue" class="text-6xl tabular-nums leading-none">0</div>
       </div>
       <div class="text-[11px] tracking-widest mt-4">MATCHES PLAYED: <span id="matchesPlayed">0</span></div>
+      <div id="lbModalBox" class="lb-modal-box mob-block lb-off">
+        <div class="lb-modal-head">
+          <span>LEADERBOARD</span>
+          <button type="button" class="lb-tab sq" data-lb-refresh title="Refresh leaderboard" aria-label="Refresh leaderboard">&#8635;</button>
+        </div>
+        <div data-lb class="lb-pane">
+          <div class="lb-list" role="list"></div>
+          <div class="lb-me lb-off"></div>
+        </div>
+      </div>
       <div id="runsList" class="space-y-1.5 max-h-40 overflow-y-auto pr-1 text-left mt-3"></div>
       <button id="bestCloseBtn" type="button" class="retro-key retro-key-active w-full mt-5 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
     </div>
@@ -573,11 +657,15 @@
   <!-- ACCOUNT -->
   <div id="accountModal" class="auth-modal hidden fixed inset-0 z-[55] flex items-center justify-center p-5 bg-black/80">
     <div class="max-w-sm w-full retro-chassis rounded-2xl p-6 text-center">
-      <div id="aAvatar" class="chip-avatar mx-auto" style="width:72px;height:72px;font-size:28px;"></div>
+      <div id="aAvatar" class="chip-avatar mx-auto" style="width:72px;height:72px;font-size:28px;cursor:pointer;" role="button" tabindex="0" title="Change photo" aria-label="Change profile photo"></div>
       <div id="aName" class="text-xl mt-3 break-all">#USER</div>
       <div id="aEmail" class="text-[10px] opacity-70 mt-1 break-all"></div>
       <div class="text-[10px] opacity-70 mt-3">YOUR SCORES ARE SAVED TO YOUR ACCOUNT.</div>
-      <button id="signOutBtn" type="button" class="retro-key c-pink w-full mt-5 py-2.5 px-6 rounded-xl text-sm">SIGN OUT</button>
+      <button id="photoChangeBtn" type="button" class="retro-key c-cyan w-full mt-4 py-2.5 px-6 rounded-xl text-xs">CHANGE PHOTO</button>
+      <button id="photoRemoveBtn" type="button" class="hidden mt-2 text-[10px] underline opacity-80" style="cursor:pointer;">REMOVE MY PHOTO</button>
+      <div id="photoMsg" class="text-[10px] leading-relaxed mt-2 min-h-[14px]"></div>
+      <input id="photoInput" type="file" accept="image/*" class="hidden" />
+      <button id="signOutBtn" type="button" class="retro-key c-pink w-full mt-3 py-2.5 px-6 rounded-xl text-sm">SIGN OUT</button>
       <button id="accountCloseBtn" type="button" class="retro-key retro-key-active w-full mt-3 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
     </div>
   </div>
