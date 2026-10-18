@@ -848,6 +848,7 @@
       // Position at the start of the current simulation step (needed for swept collision)
       const entPX = new Float32Array(MAX_ENTITIES);
       const entPY = new Float32Array(MAX_ENTITIES);
+      const entPAng = new Float32Array(MAX_ENTITIES); // silhouette orientation at the start of the step
       let entCount = 0;
 
       function spawnEntity(type, x, y, vx, vy, radius) {
@@ -865,6 +866,7 @@
         entGrazeCooldown[id] = 0;
         entGrazeCount[id] = 0;
         entLife[id] = 0;
+        entPAng[id] = hazardAngle(id);
         return id;
       }
 
@@ -883,6 +885,7 @@
           entGrazeCooldown[id] = entGrazeCooldown[last];
           entGrazeCount[id] = entGrazeCount[last];
           entLife[id] = entLife[last];
+          entPAng[id] = entPAng[last];
         }
       }
 
@@ -989,34 +992,214 @@
         return best;
       }
 
+      // Orientation of a hazard's drawn silhouette. renderArena() rotates by exactly these
+      // angles, so collision, bouncing and wall contact all use the same pose as the picture.
+      function hazardAngle(i) {
+        const type = entType[i];
+        if (type === 0) return entPhase[i] * 0.6;
+        if (type === 1 || type === 4 || type === 6) return Math.atan2(entVY[i], entVX[i]);
+        if (type === 5) return entPhase[i] * 0.25;
+        return -entPhase[i] * 0.4;
+      }
+
+      const TWO_PI = Math.PI * 2;
+      const MAX_TURN = 0.6;            // a bigger one-step heading change is a bounce snap, not a smooth turn
+      const PRISM_SOLID_R = 12;        // the green hexagon is solid: circumradius 13, inradius 11.3
+      const HAZARD_MAX_SPEED = 440;    // keeps a one-step move (<= 22px at dt 0.05) smaller than the prism's width
+
       // Distance from the core's path A->B to hazard i's drawn silhouette (0 = touching).
-      // A and B are given in the hazard's end-of-step frame. If the path is clearly farther
-      // than `cutoff`, a cheap lower bound (> cutoff) is returned instead of the exact value.
+      // A and B are given in the hazard's end-of-step frame. The silhouette also ROTATES during
+      // a step, so the path is cut into slices and each slice is tested against the pose the
+      // shape has at that moment (slice count scales so the error stays under ~0.5px).
+      // If the path is clearly farther than `cutoff`, a cheap lower bound (> cutoff) is returned.
       function sweptHazardDist(i, ax, ay, bx, by, cutoff) {
         const type = entType[i];
         const r = entRadius[i];
         const ex = entX[i];
         const ey = entY[i];
-        const lower = ptSegDist(ex, ey, ax, ay, bx, by) - r * HAZARD_BOUND[type];
+        const reachR = r * HAZARD_BOUND[type];
+        const lower = ptSegDist(ex, ey, ax, ay, bx, by) - reachR;
         if (lower > cutoff) return lower;
-        // Same orientation the renderer uses for each type
-        let ang;
-        if (type === 0) ang = entPhase[i] * 0.6;
-        else if (type === 1 || type === 4 || type === 6) ang = Math.atan2(entVY[i], entVX[i]);
-        else if (type === 5) ang = entPhase[i] * 0.25;
-        else ang = -entPhase[i] * 0.4;
-        const cs = Math.cos(ang);
-        const sn = Math.sin(ang);
+        const a1 = hazardAngle(i);
+        let turn = a1 - entPAng[i];
+        turn -= TWO_PI * Math.round(turn / TWO_PI);
+        if (turn > MAX_TURN || turn < -MAX_TURN) turn = 0;
+        const a0 = a1 - turn;
+        const slices = Math.min(12, Math.max(1, Math.ceil(Math.abs(turn) * reachR * 2.5)));
         const pieces = HAZARD_PIECES[type];
         let best = Infinity;
-        for (let p = 0; p < pieces.length; p++) {
-          const d = segToPieceDist(pieces[p], ex, ey, cs, sn, r, ax, ay, bx, by);
-          if (d < best) {
-            best = d;
-            if (best === 0) break;
+        for (let k = 0; k < slices; k++) {
+          const t0 = k / slices;
+          const t1 = (k + 1) / slices;
+          const ang = a0 + turn * (t0 + t1) * 0.5;
+          const cs = Math.cos(ang);
+          const sn = Math.sin(ang);
+          const sx = ax + (bx - ax) * t0;
+          const sy = ay + (by - ay) * t0;
+          const tx = ax + (bx - ax) * t1;
+          const ty = ay + (by - ay) * t1;
+          for (let p = 0; p < pieces.length; p++) {
+            const d = segToPieceDist(pieces[p], ex, ey, cs, sn, r, sx, sy, tx, ty);
+            if (d < best) {
+              best = d;
+              if (best === 0) return 0;
+            }
           }
         }
         return best;
+      }
+
+      /* -------------------------------------------------------------------------
+       * Rigid contact between a hazard's drawn silhouette and a circle.
+       * Used for (a) the solid green prism and (b) the player's body while i-frames are
+       * up, so a red shape can never ghost through either of them.
+       * ------------------------------------------------------------------------- */
+      const HIT = { nx: 0, ny: 0 };     // out: unit direction the hazard must move to separate
+
+      // Returns penetration depth (> 0 = overlapping) of circle (cx,cy,cr) into hazard i.
+      function hazardCircleContact(i, cx, cy, cr) {
+        const type = entType[i];
+        const pieces = HAZARD_PIECES[type];
+        if (pieces.length === 0) return 0;
+        const r = entRadius[i];
+        const ex = entX[i];
+        const ey = entY[i];
+        const rx = cx - ex;
+        const ry = cy - ey;
+        const dist2 = rx * rx + ry * ry;
+        const bound = r * HAZARD_BOUND[type] + cr;
+        if (dist2 >= bound * bound) return 0;
+        const ang = hazardAngle(i);
+        const cs = Math.cos(ang);
+        const sn = Math.sin(ang);
+        let best = Infinity;
+        let qx = ex;
+        let qy = ey;
+        let inside = false;
+        for (let p = 0; p < pieces.length; p++) {
+          const piece = pieces[p];
+          const n = piece.length >> 1;
+          for (let k = 0; k < n; k++) {
+            const ux = piece[k * 2] * r;
+            const uy = piece[k * 2 + 1] * r;
+            _pvx[k] = ex + ux * cs - uy * sn;
+            _pvy[k] = ey + ux * sn + uy * cs;
+          }
+          let pos = 0;
+          let neg = 0;
+          for (let k = 0; k < n; k++) {
+            const j = k + 1 === n ? 0 : k + 1;
+            const abx = _pvx[j] - _pvx[k];
+            const aby = _pvy[j] - _pvy[k];
+            const side = abx * (cy - _pvy[k]) - aby * (cx - _pvx[k]);
+            if (side > 0) pos++;
+            else if (side < 0) neg++;
+            const l2 = abx * abx + aby * aby;
+            let t = l2 > 1e-9 ? ((cx - _pvx[k]) * abx + (cy - _pvy[k]) * aby) / l2 : 0;
+            t = t < 0 ? 0 : (t > 1 ? 1 : t);
+            const px = _pvx[k] + abx * t;
+            const py = _pvy[k] + aby * t;
+            const d2 = (cx - px) * (cx - px) + (cy - py) * (cy - py);
+            if (d2 < best) { best = d2; qx = px; qy = py; }
+          }
+          if (pos === 0 || neg === 0) inside = true;
+        }
+        const dc = Math.sqrt(dist2);
+        if (inside) {
+          // Circle centre is inside the silhouette: separate along the centre line, clear of the bounding circle
+          if (dc > 1e-6) { HIT.nx = -rx / dc; HIT.ny = -ry / dc; } else { HIT.nx = 1; HIT.ny = 0; }
+          return cr + r * HAZARD_BOUND[type] - dc;
+        }
+        const d = Math.sqrt(best);
+        if (d >= cr) return 0;
+        if (d > 1e-6) {
+          HIT.nx = (qx - cx) / d;
+          HIT.ny = (qy - cy) / d;
+        } else if (dc > 1e-6) {
+          HIT.nx = -rx / dc;
+          HIT.ny = -ry / dc;
+        } else {
+          HIT.nx = 1;
+          HIT.ny = 0;
+        }
+        return cr - d;
+      }
+
+      // Rigid, elastic response of hazard i against a circle that does not give way
+      // (cvx,cvy = the circle's own velocity). Returns true if they were touching.
+      // Arrows/needles are drawn along their heading, so a bounce turns the picture; the solve
+      // therefore repeats (max 4x) until the drawn shape is really clear of the circle.
+      function bounceHazardOffCircle(i, cx, cy, cr, cvx, cvy, restitution) {
+        let touched = false;
+        for (let it = 0; it < 4; it++) {
+          const depth = hazardCircleContact(i, cx, cy, cr);
+          if (depth <= 0) break;
+          touched = true;
+          entX[i] += HIT.nx * (depth + 0.02);
+          entY[i] += HIT.ny * (depth + 0.02);
+          const vn = (entVX[i] - cvx) * HIT.nx + (entVY[i] - cvy) * HIT.ny;
+          if (vn < 0) {
+            const j = -(1 + restitution) * vn;
+            entVX[i] += j * HIT.nx;
+            entVY[i] += j * HIT.ny;
+          }
+        }
+        if (touched) {
+          const sp2 = entVX[i] * entVX[i] + entVY[i] * entVY[i];
+          if (sp2 > HAZARD_MAX_SPEED * HAZARD_MAX_SPEED) {
+            const k = HAZARD_MAX_SPEED / Math.sqrt(sp2);
+            entVX[i] *= k;
+            entVY[i] *= k;
+          }
+        }
+        return touched;
+      }
+
+      // Exact bounding box of entity i's drawn silhouette around its centre (rotated pose)
+      const EXT = { x0: 0, x1: 0, y0: 0, y1: 0 };
+      function hazardExtents(i) {
+        const pieces = HAZARD_PIECES[entType[i]];
+        const r = entRadius[i];
+        if (pieces.length === 0) {
+          EXT.x0 = -r; EXT.x1 = r; EXT.y0 = -r; EXT.y1 = r;
+          return;
+        }
+        const ang = hazardAngle(i);
+        const cs = Math.cos(ang);
+        const sn = Math.sin(ang);
+        let x0 = Infinity;
+        let x1 = -Infinity;
+        let y0 = Infinity;
+        let y1 = -Infinity;
+        for (let p = 0; p < pieces.length; p++) {
+          const piece = pieces[p];
+          for (let k = 0; k < piece.length; k += 2) {
+            const ux = piece[k] * r;
+            const uy = piece[k + 1] * r;
+            const x = ux * cs - uy * sn;
+            const y = ux * sn + uy * cs;
+            if (x < x0) x0 = x;
+            if (x > x1) x1 = x;
+            if (y < y0) y0 = y;
+            if (y > y1) y1 = y;
+          }
+        }
+        EXT.x0 = x0; EXT.x1 = x1; EXT.y0 = y0; EXT.y1 = y1;
+      }
+
+      // Solid arena walls for the DRAWN shape (arrow noses, needle tips and star spikes
+      // used to poke out through the wall because only the plain radius was clamped).
+      // Two passes: a bounce flips the heading of arrows/needles, which changes their pose.
+      function clampEntityToArena(i) {
+        for (let pass = 0; pass < 2; pass++) {
+          hazardExtents(i);
+          let moved = false;
+          if (entX[i] + EXT.x0 < 0) { entX[i] = -EXT.x0; entVX[i] = Math.abs(entVX[i]); moved = true; }
+          else if (entX[i] + EXT.x1 > arenaW) { entX[i] = arenaW - EXT.x1; entVX[i] = -Math.abs(entVX[i]); moved = true; }
+          if (entY[i] + EXT.y0 < 0) { entY[i] = -EXT.y0; entVY[i] = Math.abs(entVY[i]); moved = true; }
+          else if (entY[i] + EXT.y1 > arenaH) { entY[i] = arenaH - EXT.y1; entVY[i] = -Math.abs(entVY[i]); moved = true; }
+          if (!moved) break;
+        }
       }
 
       // Particle Pool: Max 512 (O(1) Swap-and-Pop)
@@ -1209,6 +1392,16 @@
         pointerX: 400,
         pointerY: 210
       };
+
+      // Shield rings are part of the body: the outermost ring you SEE is the edge that collides.
+      // Core 11px, +3px per live shield (the 2px ring stroke is included). Ghost Drive's gold ring counts too.
+      const SHIELD_RING_GAP = 3;
+      function playerBodyRadius() {
+        let rad = Player.radius;
+        if (Game.shields > 0) rad += SHIELD_RING_GAP * Math.min(2, Game.shields) + 1;
+        if (Game.overdriveTimer > 0) rad = Math.max(rad, Player.radius + 5);
+        return rad;
+      }
 
       // Active Green Resonance Prism Target
       const Prism = {
@@ -1413,16 +1606,25 @@
        * ========================================================================= */
       function relocatePrism() {
         const margin = 48;
-        for (let attempt = 0; attempt < 10; attempt++) {
+        for (let attempt = 0; attempt < 24; attempt++) {
           const nx = margin + Math.random() * (arenaW - margin * 2);
           const ny = margin + Math.random() * (arenaH - margin * 2);
           const dx = nx - Player.x;
           const dy = ny - Player.y;
-          if (dx * dx + dy * dy > 130 * 130) {
-            Prism.x = nx;
-            Prism.y = ny;
-            return;
+          if (dx * dx + dy * dy <= 130 * 130) continue;
+          // Never drop the green target inside (or hugging) a red drone
+          let clear = true;
+          for (let i = 0; i < entCount; i++) {
+            if (entType[i] === 3) continue;
+            const gap = Prism.radius + 14 + entRadius[i] * HAZARD_BOUND[entType[i]];
+            const hx = nx - entX[i];
+            const hy = ny - entY[i];
+            if (hx * hx + hy * hy < gap * gap) { clear = false; break; }
           }
+          if (!clear) continue;
+          Prism.x = nx;
+          Prism.y = ny;
+          return;
         }
         Prism.x = arenaW * 0.5;
         Prism.y = arenaH * 0.5;
@@ -1891,6 +2093,7 @@
           const type = entType[i];
           entPX[i] = entX[i];
           entPY[i] = entY[i];
+          entPAng[i] = hazardAngle(i);
           entPhase[i] += dt * 4.0;
           if (type !== 3) {
             entLife[i] -= dt;
@@ -1941,28 +2144,18 @@
           entX[i] += entVX[i] * dt * stepScale;
           entY[i] += entVY[i] * dt * stepScale;
 
-          const r = entRadius[i];
-          if (entX[i] < r) {
-            entX[i] = r;
-            entVX[i] = Math.abs(entVX[i]);
-          } else if (entX[i] > arenaW - r) {
-            entX[i] = arenaW - r;
-            entVX[i] = -Math.abs(entVX[i]);
-          }
-          if (entY[i] < r) {
-            entY[i] = r;
-            entVY[i] = Math.abs(entVY[i]);
-          } else if (entY[i] > arenaH - r) {
-            entY[i] = arenaH - r;
-            entVY[i] = -Math.abs(entVY[i]);
+          clampEntityToArena(i);
+          // The green prism is solid: red shapes bounce off its edge instead of ghosting through it
+          if (type !== 3 && bounceHazardOffCircle(i, Prism.x, Prism.y, PRISM_SOLID_R, Prism.vx || 0, Prism.vy || 0, 1)) {
+            clampEntityToArena(i);
           }
         }
 
         // Continuous collision: sweep the core's path this step against every entity's exact
         // shape. (Entities are few, so a plain loop is cheaper than - and immune to the
         // cell-size misses of - the old spatial grid.)
-        const hurtR = Player.radius - HIT_FORGIVENESS;
-        const reach = Player.radius + GRAZE_GAP;
+        const hurtR = playerBodyRadius() - HIT_FORGIVENESS;
+        const reach = hurtR + GRAZE_GAP;
         contactCount = 0;
         for (let id = 0; id < entCount; id++) {
           const ex = entX[id];
@@ -2030,6 +2223,11 @@
             } else {
               endGame('CORE DESTABILIZED');
               return;
+            }
+          } else {
+            // Invulnerable (just hit / dash tail): no damage, but the body is still solid
+            if (bounceHazardOffCircle(id, Player.x, Player.y, playerBodyRadius() + 0.02, Player.vx, Player.vy, 0.8)) {
+              clampEntityToArena(id);
             }
           }
         }
@@ -2405,7 +2603,7 @@
             ctx.setLineDash([7, 4]);
             ctx.lineDashOffset = -(performance.now() / 1000) * 20;
             ctx.beginPath();
-            ctx.arc(0, 0, Player.radius + 11, 0, Math.PI * 2);
+            ctx.arc(0, 0, Player.radius + SHIELD_RING_GAP * 2, 0, Math.PI * 2);
             ctx.stroke();
             ctx.setLineDash([]);
           }
@@ -2414,7 +2612,7 @@
             ctx.shadowColor = COLORS[5];
             ctx.shadowBlur = 6;
             ctx.beginPath();
-            ctx.arc(0, 0, Player.radius + 5.5, 0, Math.PI * 2);
+            ctx.arc(0, 0, Player.radius + SHIELD_RING_GAP, 0, Math.PI * 2);
             ctx.stroke();
           }
           ctx.restore();
