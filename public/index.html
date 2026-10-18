@@ -720,12 +720,11 @@
       };
 
       /* =========================================================================
-       * 3. O(1) PRE-ALLOCATED TYPED-ARRAY OBJECT POOLS & SPATIAL HASH GRID
+       * 3. O(1) PRE-ALLOCATED TYPED-ARRAY OBJECT POOLS
        * ========================================================================= */
+      // Background grid used by the renderer only. Collision does NOT use a grid any more.
       const GRID_COLS = 12;
       const GRID_ROWS = 8;
-      const GRID_CELLS = GRID_COLS * GRID_ROWS;
-      const gridHead = new Int32Array(GRID_CELLS);
 
       const MAX_ENTITIES = 128;
       // Types: 0 = Red Diamond Drifter, 1 = Red Seeker Arrow, 2 = Red Spiked Pulsar, 3 = Golden Shard
@@ -737,7 +736,9 @@
       const entRadius = new Float32Array(MAX_ENTITIES);
       const entPhase = new Float32Array(MAX_ENTITIES);
       const entGrazeCooldown = new Float32Array(MAX_ENTITIES);
-      const entNext = new Int32Array(MAX_ENTITIES);
+      // Position at the start of the current simulation step (needed for swept collision)
+      const entPX = new Float32Array(MAX_ENTITIES);
+      const entPY = new Float32Array(MAX_ENTITIES);
       let entCount = 0;
 
       function spawnEntity(type, x, y, vx, vy, radius) {
@@ -746,6 +747,8 @@
         entType[id] = type;
         entX[id] = x;
         entY[id] = y;
+        entPX[id] = x;
+        entPY[id] = y;
         entVX[id] = vx;
         entVY[id] = vy;
         entRadius[id] = radius;
@@ -760,12 +763,140 @@
           entType[id] = entType[last];
           entX[id] = entX[last];
           entY[id] = entY[last];
+          entPX[id] = entPX[last];
+          entPY[id] = entPY[last];
           entVX[id] = entVX[last];
           entVY[id] = entVY[last];
           entRadius[id] = entRadius[last];
           entPhase[id] = entPhase[last];
           entGrazeCooldown[id] = entGrazeCooldown[last];
         }
+      }
+
+      /* =========================================================================
+       * 3b. CONTINUOUS (SWEPT) COLLISION AGAINST THE EXACT DRAWN SHAPES
+       *     Old test: "circle vs circle, checked once at the end of the frame". That
+       *     (a) ignored the real silhouettes (arrow nose / star spikes stuck out of the
+       *     hitbox) and (b) let fast movers skip straight through (dash, lag spikes).
+       *     Now the core's whole path this step is tested against the same polygons the
+       *     renderer draws, so what you see is what collides - at any frame rate.
+       * ========================================================================= */
+      const GRAZE_GAP = 20;       // px between core and shape that still counts as a graze
+      const HIT_FORGIVENESS = 0;  // px shaved off the core's hurtbox (0 = exact, was 2)
+
+      // Convex pieces of each hazard silhouette in units of the entity radius, as flat
+      // x,y lists. They mirror the vertices drawn in renderArena().
+      const HAZARD_PIECES = (function () {
+        const inner = (a) => [Math.cos(a) * 0.6, Math.sin(a) * 0.6];
+        const hex = [];
+        for (let j = 0; j < 6; j++) hex.push.apply(hex, inner(Math.PI / 6 + (j * Math.PI) / 3));
+        const star = [hex];
+        for (let k = 0; k < 6; k++) {
+          const a = (k * Math.PI) / 3;
+          const p0 = inner(a - Math.PI / 6);
+          const p1 = inner(a + Math.PI / 6);
+          star.push([p0[0], p0[1], Math.cos(a) * 1.15, Math.sin(a) * 1.15, p1[0], p1[1]]);
+        }
+        return [
+          [[0, -1, 1, 0, 0, 1, -1, 0]],                                    // 0: diamond
+          [[1.3, 0, -1, 0.85, -0.45, 0], [1.3, 0, -0.45, 0, -1, -0.85]],    // 1: arrow (notched -> 2 triangles)
+          star                                                              // 2: spiked core (hexagon + 6 spikes)
+        ];
+      })();
+      // Radius of a circle that fully contains each silhouette (cheap broad phase)
+      const HAZARD_BOUND = [1.0, 1.32, 1.15];
+
+      const contacts = new Int16Array(MAX_ENTITIES);
+      let contactCount = 0;
+
+      // Distance from point P to segment AB
+      function ptSegDist(px, py, ax, ay, bx, by) {
+        const abx = bx - ax;
+        const aby = by - ay;
+        const l2 = abx * abx + aby * aby;
+        let t = l2 > 1e-9 ? ((px - ax) * abx + (py - ay) * aby) / l2 : 0;
+        t = t < 0 ? 0 : (t > 1 ? 1 : t);
+        const dx = ax + abx * t - px;
+        const dy = ay + aby * t - py;
+        return Math.sqrt(dx * dx + dy * dy);
+      }
+
+      // Smallest distance between segments AB and CD (0 if they cross or touch)
+      function segSegDist(ax, ay, bx, by, cx, cy, dx, dy) {
+        const o1 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        const o2 = (bx - ax) * (dy - ay) - (by - ay) * (dx - ax);
+        const o3 = (dx - cx) * (ay - cy) - (dy - cy) * (ax - cx);
+        const o4 = (dx - cx) * (by - cy) - (dy - cy) * (bx - cx);
+        if (o1 * o2 < 0 && o3 * o4 < 0) return 0;
+        return Math.min(
+          ptSegDist(ax, ay, cx, cy, dx, dy),
+          ptSegDist(bx, by, cx, cy, dx, dy),
+          ptSegDist(cx, cy, ax, ay, bx, by),
+          ptSegDist(dx, dy, ax, ay, bx, by)
+        );
+      }
+
+      const _pvx = new Float64Array(8);
+      const _pvy = new Float64Array(8);
+
+      // Distance from segment AB to one convex piece placed at (ex,ey), rotated (cs,sn), scaled r
+      function segToPieceDist(piece, ex, ey, cs, sn, r, ax, ay, bx, by) {
+        const n = piece.length >> 1;
+        for (let k = 0; k < n; k++) {
+          const ux = piece[k * 2] * r;
+          const uy = piece[k * 2 + 1] * r;
+          _pvx[k] = ex + ux * cs - uy * sn;
+          _pvy[k] = ey + ux * sn + uy * cs;
+        }
+        // Path starts inside the piece? (same cross-product sign for every edge)
+        let pos = 0;
+        let neg = 0;
+        for (let k = 0; k < n; k++) {
+          const j = k + 1 === n ? 0 : k + 1;
+          const cr = (_pvx[j] - _pvx[k]) * (ay - _pvy[k]) - (_pvy[j] - _pvy[k]) * (ax - _pvx[k]);
+          if (cr > 0) pos++;
+          else if (cr < 0) neg++;
+        }
+        if (pos === 0 || neg === 0) return 0;
+        let best = Infinity;
+        for (let k = 0; k < n; k++) {
+          const j = k + 1 === n ? 0 : k + 1;
+          const d = segSegDist(ax, ay, bx, by, _pvx[k], _pvy[k], _pvx[j], _pvy[j]);
+          if (d < best) {
+            best = d;
+            if (best === 0) break;
+          }
+        }
+        return best;
+      }
+
+      // Distance from the core's path A->B to hazard i's drawn silhouette (0 = touching).
+      // A and B are given in the hazard's end-of-step frame. If the path is clearly farther
+      // than `cutoff`, a cheap lower bound (> cutoff) is returned instead of the exact value.
+      function sweptHazardDist(i, ax, ay, bx, by, cutoff) {
+        const type = entType[i];
+        const r = entRadius[i];
+        const ex = entX[i];
+        const ey = entY[i];
+        const lower = ptSegDist(ex, ey, ax, ay, bx, by) - r * HAZARD_BOUND[type];
+        if (lower > cutoff) return lower;
+        // Same orientation the renderer uses for each type
+        let ang;
+        if (type === 0) ang = entPhase[i] * 0.6;
+        else if (type === 1) ang = Math.atan2(entVY[i], entVX[i]);
+        else ang = -entPhase[i] * 0.4;
+        const cs = Math.cos(ang);
+        const sn = Math.sin(ang);
+        const pieces = HAZARD_PIECES[type];
+        let best = Infinity;
+        for (let p = 0; p < pieces.length; p++) {
+          const d = segToPieceDist(pieces[p], ex, ey, cs, sn, r, ax, ay, bx, by);
+          if (d < best) {
+            best = d;
+            if (best === 0) break;
+          }
+        }
+        return best;
       }
 
       // Particle Pool: Max 512 (O(1) Swap-and-Pop)
@@ -1092,7 +1223,7 @@
       }
 
       /* =========================================================================
-       * 6. ARENA SIZING & SPATIAL HASHING (O(1) Cell Mapping)
+       * 6. ARENA SIZING
        * ========================================================================= */
       function resizeCanvas() {
         const holder = canvas.parentElement;
@@ -1108,25 +1239,6 @@
         Prism.x = Math.max(36, Math.min(arenaW - 36, Prism.x));
         Prism.y = Math.max(36, Math.min(arenaH - 36, Prism.y));
         renderArena();
-      }
-
-      function rebuildSpatialGrid() {
-        gridHead.fill(-1);
-        const invW = GRID_COLS / arenaW;
-        const invH = GRID_ROWS / arenaH;
-
-        for (let i = 0; i < entCount; i++) {
-          let cx = (entX[i] * invW) | 0;
-          let cy = (entY[i] * invH) | 0;
-          if (cx < 0) cx = 0;
-          else if (cx >= GRID_COLS) cx = GRID_COLS - 1;
-          if (cy < 0) cy = 0;
-          else if (cy >= GRID_ROWS) cy = GRID_ROWS - 1;
-
-          const cell = cy * GRID_COLS + cx;
-          entNext[i] = gridHead[cell];
-          gridHead[cell] = i;
-        }
       }
 
       /* =========================================================================
@@ -1243,41 +1355,23 @@
       function dashImpact() {
         spawnShockwave(Player.x, Player.y, 105, 0);
         emitBurst(Player.x, Player.y, 16, 210, 0);
-        rebuildSpatialGrid();
         const blastR = 102;
         const blastR2 = blastR * blastR;
-        const invW = GRID_COLS / arenaW;
-        const invH = GRID_ROWS / arenaH;
-        const centerCol = Math.max(0, Math.min(GRID_COLS - 1, (Player.x * invW) | 0));
-        const centerRow = Math.max(0, Math.min(GRID_ROWS - 1, (Player.y * invH) | 0));
 
+        // Every entity is checked directly, so the blast always covers its full radius
+        // (the old grid search only reached ~2 cells, which is < 102px on short arenas).
         let shatteredNow = 0;
-        const toShatter = [];
-
-        for (let r = Math.max(0, centerRow - 2); r <= Math.min(GRID_ROWS - 1, centerRow + 2); r++) {
-          for (let c = Math.max(0, centerCol - 2); c <= Math.min(GRID_COLS - 1, centerCol + 2); c++) {
-            let id = gridHead[r * GRID_COLS + c];
-            while (id !== -1) {
-              if (entType[id] !== 3) {
-                const ex = entX[id] - Player.x;
-                const ey = entY[id] - Player.y;
-                if (ex * ex + ey * ey <= blastR2) {
-                  toShatter.push(id);
-                }
-              }
-              id = entNext[id];
-            }
-          }
-        }
-
-        for (let k = 0; k < toShatter.length; k++) {
-          const idx = toShatter[k];
+        for (let idx = 0; idx < entCount; idx++) {
+          if (entType[idx] === 3) continue;
           const sx = entX[idx];
           const sy = entY[idx];
+          const ex = sx - Player.x;
+          const ey = sy - Player.y;
+          if (ex * ex + ey * ey > blastR2) continue;
           entType[idx] = 3;
           entRadius[idx] = 6.5;
-          entVX[idx] = (sx - Player.x) * 2.2;
-          entVY[idx] = (sy - Player.y) * 2.2;
+          entVX[idx] = ex * 2.2;
+          entVY[idx] = ey * 2.2;
           emitBurst(sx, sy, 10, 160, 3);
           shatteredNow++;
         }
@@ -1315,6 +1409,12 @@
       /* =========================================================================
        * 8. MAIN SIMULATION STEP
        * ========================================================================= */
+      // Per-frame damping factors were tuned at 60fps. This keeps them identical at 60fps
+      // but makes them behave the same at 30/144/240fps too.
+      function damp(k, dt) {
+        return Math.pow(k, dt * 60);
+      }
+
       function stepSimulation(dt) {
         if (Game.mode === 'blitz') {
           Game.blitzTimeLeft -= dt;
@@ -1407,12 +1507,14 @@
             Player.vx += (tvx - Player.vx) * Math.min(1, dt * 16);
             Player.vy += (tvy - Player.vy) * Math.min(1, dt * 16);
           } else {
-            Player.vx *= 0.82;
-            Player.vy *= 0.82;
+            const k = damp(0.82, dt);
+            Player.vx *= k;
+            Player.vy *= k;
           }
         } else {
-          Player.vx *= 0.88;
-          Player.vy *= 0.88;
+          const k = damp(0.88, dt);
+          Player.vx *= k;
+          Player.vy *= k;
         }
 
         if (Player.dashT > 0) {
@@ -1423,6 +1525,9 @@
           Player.vy = Player.dashDirY * Player.dashSpeed * f;
         }
 
+        // Where the core was when this step began (used for swept collision + pickup)
+        const prevPX = Player.x;
+        const prevPY = Player.y;
         Player.x += Player.vx * dt;
         Player.y += Player.vy * dt;
 
@@ -1479,10 +1584,9 @@
         // Check Green Prism Pickup (+100 × Multiplier)
         Prism.angle += dt * 2.4;
         Prism.pulse += dt * 5.0;
-        const pdx = Prism.x - Player.x;
-        const pdy = Prism.y - Player.y;
         const pickupDist = Player.radius + Prism.radius + 4;
-        if (pdx * pdx + pdy * pdy <= pickupDist * pickupDist) {
+        // Swept: counts if the core passed through the pickup zone at any point this step
+        if (ptSegDist(Prism.x, Prism.y, prevPX, prevPY, Player.x, Player.y) <= pickupDist) {
           Game.multiplier = Math.min(64, Game.multiplier + 1);
           if (Game.multiplier > Game.peakMultiplier) {
             Game.peakMultiplier = Game.multiplier;
@@ -1505,6 +1609,8 @@
 
         for (let i = entCount - 1; i >= 0; i--) {
           const type = entType[i];
+          entPX[i] = entX[i];
+          entPY[i] = entY[i];
           entPhase[i] += dt * 4.0;
           if (entGrazeCooldown[i] > 0) {
             entGrazeCooldown[i] = Math.max(0, entGrazeCooldown[i] - dt);
@@ -1528,8 +1634,9 @@
               entVX[i] += (gx / gd) * 980 * dt;
               entVY[i] += (gy / gd) * 980 * dt;
             } else {
-              entVX[i] *= 0.95;
-              entVY[i] *= 0.95;
+              const k = damp(0.95, dt);
+              entVX[i] *= k;
+              entVY[i] *= k;
             }
           }
 
@@ -1554,69 +1661,53 @@
           }
         }
 
-        // Spatial Grid Collision Check
-        rebuildSpatialGrid();
-        const invW = GRID_COLS / arenaW;
-        const invH = GRID_ROWS / arenaH;
-        const pCol = Math.max(0, Math.min(GRID_COLS - 1, (Player.x * invW) | 0));
-        const pRow = Math.max(0, Math.min(GRID_ROWS - 1, (Player.y * invH) | 0));
-
-        const shardsToCollect = [];
-        let hazardHitId = -1;
-
-        for (let r = Math.max(0, pRow - 1); r <= Math.min(GRID_ROWS - 1, pRow + 1); r++) {
-          for (let c = Math.max(0, pCol - 1); c <= Math.min(GRID_COLS - 1, pCol + 1); c++) {
-            let id = gridHead[r * GRID_COLS + c];
-            while (id !== -1) {
-              const dx = entX[id] - Player.x;
-              const dy = entY[id] - Player.y;
-              const d2 = dx * dx + dy * dy;
-              const hitR = Player.radius + entRadius[id];
-
-              if (entType[id] === 3) {
-                if (d2 <= (hitR + 6) * (hitR + 6)) {
-                  shardsToCollect.push(id);
-                }
-              } else {
-                if (d2 <= (hitR - 2) * (hitR - 2)) {
-                  hazardHitId = id;
-                } else {
-                  const grazeR = hitR + 20;
-                  if (d2 <= grazeR * grazeR && entGrazeCooldown[id] <= 0) {
-                    entGrazeCooldown[id] = 1.1;
-                    Game.overdriveCharge = Math.min(100, Game.overdriveCharge + 6);
-                    Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 0.45);
-                    Synth.playGraze();
-                    spawnParticle(entX[id], entY[id], -dx * 2, -dy * 2, 0.3, 2.5, 0);
-                  }
-                }
-              }
-              id = entNext[id];
+        // Continuous collision: sweep the core's path this step against every entity's exact
+        // shape. (Entities are few, so a plain loop is cheaper than - and immune to the
+        // cell-size misses of - the old spatial grid.)
+        const hurtR = Player.radius - HIT_FORGIVENESS;
+        const reach = Player.radius + GRAZE_GAP;
+        contactCount = 0;
+        for (let id = 0; id < entCount; id++) {
+          const ex = entX[id];
+          const ey = entY[id];
+          // Core path expressed in this entity's end-of-step frame
+          const ax = prevPX - entPX[id] + ex;
+          const ay = prevPY - entPY[id] + ey;
+          if (entType[id] === 3) {
+            if (ptSegDist(ex, ey, ax, ay, Player.x, Player.y) <= Player.radius + entRadius[id] + 6) {
+              contacts[contactCount++] = id;
+            }
+          } else {
+            const gap = sweptHazardDist(id, ax, ay, Player.x, Player.y, reach);
+            if (gap <= hurtR) {
+              contacts[contactCount++] = id;
+            } else if (gap <= reach && entGrazeCooldown[id] <= 0) {
+              entGrazeCooldown[id] = 1.1;
+              Game.overdriveCharge = Math.min(100, Game.overdriveCharge + 6);
+              Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 0.45);
+              Synth.playGraze();
+              spawnParticle(ex, ey, -(ex - Player.x) * 2, -(ey - Player.y) * 2, 0.3, 2.5, 0);
             }
           }
         }
 
-        if (shardsToCollect.length > 0) {
-          shardsToCollect.sort((a, b) => b - a);
-          for (let k = 0; k < shardsToCollect.length; k++) {
-            const id = shardsToCollect[k];
-            if (id < entCount && entType[id] === 3) {
-              Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 0.35);
-              Synth.playShard();
-              emitBurst(entX[id], entY[id], 6, 110, 3);
-              removeEntity(id);
-            }
-          }
-        }
-
-        if (hazardHitId !== -1) {
-          if (Player.dashActiveTimer > 0 || Game.overdriveTimer > 0) {
-            const sx = entX[hazardHitId];
-            const sy = entY[hazardHitId];
-            entType[hazardHitId] = 3;
-            entRadius[hazardHitId] = 6.5;
+        // Resolve contacts from the highest index down: removeEntity() swaps the last entity
+        // into the freed slot, so going downwards keeps every remaining index valid.
+        let shatteredNow = 0;
+        for (let k = contactCount - 1; k >= 0; k--) {
+          const id = contacts[k];
+          if (entType[id] === 3) {
+            Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 0.35);
+            Synth.playShard();
+            emitBurst(entX[id], entY[id], 6, 110, 3);
+            removeEntity(id);
+          } else if (Player.dashActiveTimer > 0 || Game.overdriveTimer > 0) {
+            const sx = entX[id];
+            const sy = entY[id];
+            entType[id] = 3;
+            entRadius[id] = 6.5;
             Game.shatteredTotal++;
-            Synth.playShatter(1);
+            shatteredNow++;
             emitBurst(sx, sy, 12, 180, 3);
           } else if (Player.invulnTimer <= 0) {
             Synth.playShieldHit();
@@ -1627,7 +1718,7 @@
             const shieldCol = Game.shields === 2 ? 4 : (Game.shields === 1 ? 5 : 2);
             spawnShockwave(Player.x, Player.y, 130, shieldCol);
             emitBurst(Player.x, Player.y, 24, 240, shieldCol);
-            removeEntity(hazardHitId);
+            removeEntity(id);
 
             if (Game.mode === 'zen') {
               Game.multiplier = 1;
@@ -1641,7 +1732,9 @@
             }
           }
         }
+        if (shatteredNow > 0) Synth.playShatter(shatteredNow);
 
+        const pDamp = damp(0.94, dt);
         for (let i = partCount - 1; i >= 0; i--) {
           partLife[i] -= dt;
           if (partLife[i] <= 0) {
@@ -1659,8 +1752,8 @@
           } else {
             partX[i] += partVX[i] * dt;
             partY[i] += partVY[i] * dt;
-            partVX[i] *= 0.94;
-            partVY[i] *= 0.94;
+            partVX[i] *= pDamp;
+            partVY[i] *= pDamp;
           }
         }
 
@@ -1916,28 +2009,31 @@
           ctx.lineWidth = 2;
           ctx.setLineDash([4, 3]);
           ctx.beginPath();
-          ctx.arc(0, 0, Player.radius + 3, 0, Math.PI * 2);
+          ctx.arc(0, 0, Player.radius + 4, 0, Math.PI * 2);
           ctx.stroke();
           ctx.setLineDash([]);
         }
 
+        // Invulnerability blink: shared by the rings AND the core, so with 0 shields it's still
+        // obvious why enemies pass through for a moment after a hit.
+        const blink = (Player.invulnTimer > 0 && Game.overdriveTimer <= 0)
+          ? 0.45 + 0.55 * Math.abs(Math.sin(Player.invulnTimer * 18))
+          : 1;
+
         // Shields are always visible while you have them: outer = violet (breaks first), inner = lime
         {
-          const blink = (Player.invulnTimer > 0 && Game.overdriveTimer <= 0)
-            ? 0.45 + 0.55 * Math.abs(Math.sin(Player.invulnTimer * 18))
-            : 1;
           ctx.save();
           ctx.globalAlpha = blink;
           ctx.lineCap = 'round';
-          ctx.lineWidth = 2.5;
+          ctx.lineWidth = 3;
           if (Game.shields >= 2) {
             ctx.strokeStyle = COLORS[4];
             ctx.shadowColor = COLORS[4];
             ctx.shadowBlur = 8;
-            ctx.setLineDash([8, 4]);
+            ctx.setLineDash([10, 5]);
             ctx.lineDashOffset = -(performance.now() / 1000) * 20;
             ctx.beginPath();
-            ctx.arc(0, 0, Player.radius + 11, 0, Math.PI * 2);
+            ctx.arc(0, 0, Player.radius + 17, 0, Math.PI * 2);
             ctx.stroke();
             ctx.setLineDash([]);
           }
@@ -1946,7 +2042,7 @@
             ctx.shadowColor = COLORS[5];
             ctx.shadowBlur = 8;
             ctx.beginPath();
-            ctx.arc(0, 0, Player.radius + 6, 0, Math.PI * 2);
+            ctx.arc(0, 0, Player.radius + 9, 0, Math.PI * 2);
             ctx.stroke();
           }
           ctx.restore();
@@ -1958,6 +2054,7 @@
           ctx.shadowColor = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
           ctx.shadowBlur = 18;
         }
+        ctx.globalAlpha = Player.dashT > 0 ? 1 : blink;
         ctx.fillStyle = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
         ctx.beginPath();
         ctx.arc(0, 0, Player.radius, 0, Math.PI * 2);
