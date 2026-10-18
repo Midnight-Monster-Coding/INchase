@@ -491,6 +491,7 @@
         <li><span class="nb-pill c-lime" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GREEN</span> Touch it. +100 points.</li>
         <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">DASH</span> <span class="desk-only">Space or click.</span><span class="mob-only">Tap DASH.</span> -25 points. Breaks nearby red drones.</li>
         <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">RED</span> Stay away. A hit costs one shield.</li>
+        <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A78BFA">OUTER</span> <span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A3E635">INNER</span> You have 2 shield rings. The violet outer ring breaks first, then the lime inner ring. A hit with no ring left ends the run. Both rings come back at every new wave.</li>
         <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GHOST</span> Fills as you play. <span class="desk-only">Press E or wheel click when full.</span><span class="mob-only">Tap GHOST when full.</span></li>
         <li><span class="desk-only">Move with mouse, WASD or arrows. P to pause.</span><span class="mob-only">Move with the stick. Use the button under it to switch to arrows.</span></li>
       </ul>
@@ -711,6 +712,10 @@
 
         playShieldHit() {
           this.tone(160, 'sawtooth', 0.35, 0.16, 55);
+        },
+
+        playShieldRestore() {
+          this.tone(520, 'triangle', 0.32, 0.1, 1040);
         }
       };
 
@@ -1325,6 +1330,13 @@
           Game.waveTimer = 0;
           Game.wave++;
           spawnWaveHazards(2 + Math.min(4, (Game.wave >> 1)));
+          // Every new wave restores both shields (outer + inner)
+          if (Game.shields < 2) {
+            Game.shields = 2;
+            Synth.playShieldRestore();
+            spawnShockwave(Player.x, Player.y, 95, 4);
+            emitBurst(Player.x, Player.y, 14, 170, 4);
+          }
         }
 
         let activeHazards = 0;
@@ -1611,8 +1623,10 @@
             Game.shakeTime = 0.28;
             Game.shakeMag = 10;
             Player.invulnTimer = 1.4;
-            spawnShockwave(Player.x, Player.y, 130, 2);
-            emitBurst(Player.x, Player.y, 24, 240, 2);
+            // Outer shield (2 left) breaks violet, inner shield (1 left) breaks lime, no shield = red
+            const shieldCol = Game.shields === 2 ? 4 : (Game.shields === 1 ? 5 : 2);
+            spawnShockwave(Player.x, Player.y, 130, shieldCol);
+            emitBurst(Player.x, Player.y, 24, 240, shieldCol);
             removeEntity(hazardHitId);
 
             if (Game.mode === 'zen') {
@@ -1674,7 +1688,8 @@
        *    (With Reduced Subtle Hover Grid Rectangle Glow & Unified Red Enemies)
        * ========================================================================= */
       // 0: Cyan Core, 1: Emerald Prism, 2: Crimson Hazard, 3: Golden Shard
-      const COLORS = ['#38BDF8', '#10B981', '#F43F5E', '#F59E0B'];
+      const COLORS = ['#38BDF8', '#10B981', '#F43F5E', '#F59E0B', '#A78BFA', '#A3E635'];
+      // 4: Outer shield (violet), 5: Inner shield (lime)
 
       function renderArena() {
         ctx.save();
@@ -1895,14 +1910,46 @@
         ctx.save();
         ctx.translate(Player.x, Player.y);
 
-        if (Player.invulnTimer > 0 || Game.overdriveTimer > 0) {
-          ctx.strokeStyle = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
+        // Ghost Drive: thin gold ring just outside the core
+        if (Game.overdriveTimer > 0) {
+          ctx.strokeStyle = COLORS[3];
           ctx.lineWidth = 2;
-          ctx.setLineDash([5, 4]);
+          ctx.setLineDash([4, 3]);
           ctx.beginPath();
-          ctx.arc(0, 0, Player.radius + 9, 0, Math.PI * 2);
+          ctx.arc(0, 0, Player.radius + 4, 0, Math.PI * 2);
           ctx.stroke();
           ctx.setLineDash([]);
+        }
+
+        // Shields are always visible while you have them: outer = violet (breaks first), inner = lime
+        {
+          const blink = (Player.invulnTimer > 0 && Game.overdriveTimer <= 0)
+            ? 0.45 + 0.55 * Math.abs(Math.sin(Player.invulnTimer * 18))
+            : 1;
+          ctx.save();
+          ctx.globalAlpha = blink;
+          ctx.lineCap = 'round';
+          ctx.lineWidth = 3;
+          if (Game.shields >= 2) {
+            ctx.strokeStyle = COLORS[4];
+            ctx.shadowColor = COLORS[4];
+            ctx.shadowBlur = 8;
+            ctx.setLineDash([10, 5]);
+            ctx.lineDashOffset = -(performance.now() / 1000) * 20;
+            ctx.beginPath();
+            ctx.arc(0, 0, Player.radius + 17, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+          if (Game.shields >= 1) {
+            ctx.strokeStyle = COLORS[5];
+            ctx.shadowColor = COLORS[5];
+            ctx.shadowBlur = 8;
+            ctx.beginPath();
+            ctx.arc(0, 0, Player.radius + 9, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+          ctx.restore();
         }
 
         if (Player.dashT > 0) {
