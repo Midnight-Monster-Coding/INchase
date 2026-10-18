@@ -584,6 +584,28 @@ async function fetchMyRank() {
   }
 }
 
+// Rival: the closest player above `score`, never me. Uses the loaded rows only if they reach down to this
+// score (or the whole board is loaded); otherwise runs a one-off query.
+App.findRival = async function (score) {
+  if (!currentUser || !profile) return null;
+  const rows = Board.rows;
+  if (rows.length && (Board.done || rows[rows.length - 1].best <= score)) {
+    const above = rows.filter((r) => r.best > score && r.uid !== currentUser.uid);
+    const r = above[above.length - 1];
+    return r ? { name: r.username, gap: r.best - score } : null;
+  }
+  try {
+    const snap = await getDocs(query(collection(db, 'leaderboard'), where('best', '>', score), orderBy('best', 'asc'), limit(2)));
+    const d = snap.docs.find((x) => x.id !== currentUser.uid);
+    if (!d) return null;
+    const x = d.data() || {};
+    return { name: String(x.username || '?'), gap: (Number(x.best) || 0) - score };
+  } catch (e) {
+    console.warn('[auth] rival lookup failed', e);
+    return null;
+  }
+};
+
 // reset = true: reload from the top (and re-count my rank). Otherwise load the next page.
 async function loadBoard(reset) {
   if (!currentUser || !profile) return;
