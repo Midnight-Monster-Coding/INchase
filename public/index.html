@@ -1916,7 +1916,7 @@
           ctx.lineWidth = 2;
           ctx.setLineDash([4, 3]);
           ctx.beginPath();
-          ctx.arc(0, 0, Player.radius + 4, 0, Math.PI * 2);
+          ctx.arc(0, 0, Player.radius + 3, 0, Math.PI * 2);
           ctx.stroke();
           ctx.setLineDash([]);
         }
@@ -1929,15 +1929,15 @@
           ctx.save();
           ctx.globalAlpha = blink;
           ctx.lineCap = 'round';
-          ctx.lineWidth = 3;
+          ctx.lineWidth = 2.5;
           if (Game.shields >= 2) {
             ctx.strokeStyle = COLORS[4];
             ctx.shadowColor = COLORS[4];
             ctx.shadowBlur = 8;
-            ctx.setLineDash([10, 5]);
+            ctx.setLineDash([8, 4]);
             ctx.lineDashOffset = -(performance.now() / 1000) * 20;
             ctx.beginPath();
-            ctx.arc(0, 0, Player.radius + 17, 0, Math.PI * 2);
+            ctx.arc(0, 0, Player.radius + 11, 0, Math.PI * 2);
             ctx.stroke();
             ctx.setLineDash([]);
           }
@@ -1946,7 +1946,7 @@
             ctx.shadowColor = COLORS[5];
             ctx.shadowBlur = 8;
             ctx.beginPath();
-            ctx.arc(0, 0, Player.radius + 9, 0, Math.PI * 2);
+            ctx.arc(0, 0, Player.radius + 6, 0, Math.PI * 2);
             ctx.stroke();
           }
           ctx.restore();
