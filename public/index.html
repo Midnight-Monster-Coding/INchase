@@ -563,7 +563,7 @@
       <h2 class="text-xl mb-4 t-ink" style="text-shadow: 2px 2px 0 var(--cyan);">HOW TO PLAY</h2>
       <ul class="text-xs leading-relaxed space-y-2.5">
         <li><span class="nb-pill c-lime" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GREEN</span> Touch it. +100 points.</li>
-        <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">DASH</span> <span class="desk-only">Space or click.</span><span class="mob-only">Tap DASH.</span> -25 points. Breaks nearby red drones.</li>
+        <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">DASH</span> <span class="desk-only">Space or click.</span><span class="mob-only">Tap DASH.</span> -25 points, refunded if it breaks a drone. A miss costs one multiplier step.</li>
         <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">RED</span> Stay away. A hit costs one shield.</li>
         <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A78BFA">OUTER</span> <span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A3E635">INNER</span> You have 2 shield rings. The violet outer ring breaks first, then the lime inner ring. A hit with no ring left ends the run. Both rings come back at every new wave.</li>
         <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GHOST</span> Fills as you play. <span class="desk-only">Press E or wheel click when full.</span><span class="mob-only">Tap GHOST when full.</span></li>
@@ -824,6 +824,15 @@
       const entRadius = new Float32Array(MAX_ENTITIES);
       const entPhase = new Float32Array(MAX_ENTITIES);
       const entGrazeCooldown = new Float32Array(MAX_ENTITIES);
+      const entGrazeCount = new Uint8Array(MAX_ENTITIES); // point-scoring grazes used on this enemy
+      const entLife = new Float32Array(MAX_ENTITIES);     // hazard seconds left (shards ignore it)
+      // Spawn warnings: a hazard appears at its marker after SPAWN_WARN seconds
+      const MAX_PEND = 16;
+      const SPAWN_WARN = 0.6;
+      const pendX = new Float32Array(MAX_PEND);
+      const pendY = new Float32Array(MAX_PEND);
+      const pendT = new Float32Array(MAX_PEND);
+      let pendCount = 0;
       // Position at the start of the current simulation step (needed for swept collision)
       const entPX = new Float32Array(MAX_ENTITIES);
       const entPY = new Float32Array(MAX_ENTITIES);
@@ -842,6 +851,8 @@
         entRadius[id] = radius;
         entPhase[id] = Math.random() * 6.28318;
         entGrazeCooldown[id] = 0;
+        entGrazeCount[id] = 0;
+        entLife[id] = 0;
         return id;
       }
 
@@ -858,6 +869,8 @@
           entRadius[id] = entRadius[last];
           entPhase[id] = entPhase[last];
           entGrazeCooldown[id] = entGrazeCooldown[last];
+          entGrazeCount[id] = entGrazeCount[last];
+          entLife[id] = entLife[last];
         }
       }
 
@@ -1136,6 +1149,11 @@
         waveTimer: 0,
         blitzTimeLeft: 90,
         shatteredTotal: 0,
+        waveBudget: 0,
+        calmTimer: 0,
+        spawnGap: 0,
+        dashHit: false,
+        dashPending: false,
         shakeTime: 0,
         shakeMag: 0,
         rafId: null,
@@ -1349,49 +1367,54 @@
         Prism.y = arenaH * 0.5;
       }
 
-      function spawnWaveHazards(count) {
-        for (let i = 0; i < count; i++) {
-          if (entCount >= MAX_ENTITIES - 8) break;
-          let sx = 0;
-          let sy = 0;
+      const HAZARD_LIFE_MIN = 8;
+      const HAZARD_LIFE_VAR = 2;   // lifetime = 8..10s
+      const HAZARD_FADE = 1.5;     // fades over the last 1.5s
+      const CALM_TIME = 2.5;
+      const CALM_LIFE_CAP = 2.0;
+      function waveBudgetFor(w) { return 6 + Math.min(12, w * 2); }
+      function hazardCapFor(w) { return 4 + Math.min(8, w); }
+
+      // Pick a random border point at least 200px from the player and show a warning there
+      function queueSpawn() {
+        if (pendCount >= MAX_PEND) return;
+        let bx = 20, by = 20, bestD = -1;
+        for (let t = 0; t < 14; t++) {
+          let x, y;
           const edge = (Math.random() * 4) | 0;
-          if (edge === 0) {
-            sx = Math.random() * arenaW;
-            sy = 20;
-          } else if (edge === 1) {
-            sx = arenaW - 20;
-            sy = Math.random() * arenaH;
-          } else if (edge === 2) {
-            sx = Math.random() * arenaW;
-            sy = arenaH - 20;
-          } else {
-            sx = 20;
-            sy = Math.random() * arenaH;
-          }
-
-          const pdx = sx - Player.x;
-          const pdy = sy - Player.y;
-          if (pdx * pdx + pdy * pdy < 150 * 150) {
-            sx = (sx + arenaW * 0.5) % arenaW;
-            sy = (sy + arenaH * 0.5) % arenaH;
-          }
-
-          const roll = Math.random();
-          const angle = Math.random() * Math.PI * 2;
-          if (roll < 0.6) {
-            // Type 0: Red Diamond Drifter
-            const spd = 95 + Math.min(Game.wave * 8, 90);
-            spawnEntity(0, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 11);
-          } else if (roll < 0.88) {
-            // Type 1: Red Seeker Drone
-            const spd = 85 + Math.min(Game.wave * 7, 80);
-            spawnEntity(1, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 11);
-          } else {
-            // Type 2: Red Spiked Core
-            const spd = 60;
-            spawnEntity(2, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 13);
-          }
+          if (edge === 0) { x = Math.random() * arenaW; y = 20; }
+          else if (edge === 1) { x = arenaW - 20; y = Math.random() * arenaH; }
+          else if (edge === 2) { x = Math.random() * arenaW; y = arenaH - 20; }
+          else { x = 20; y = Math.random() * arenaH; }
+          const d = Math.hypot(x - Player.x, y - Player.y);
+          if (d > bestD) { bestD = d; bx = x; by = y; }
+          if (d >= 200) break;
         }
+        pendX[pendCount] = bx;
+        pendY[pendCount] = by;
+        pendT[pendCount] = SPAWN_WARN;
+        pendCount++;
+      }
+
+      function spawnHazardAt(sx, sy) {
+        if (entCount >= MAX_ENTITIES - 8) return;
+        const roll = Math.random();
+        const angle = Math.random() * Math.PI * 2;
+        let id;
+        if (roll < 0.6) {
+          // Type 0: Red Diamond Drifter
+          const spd = 95 + Math.min(Game.wave * 8, 90);
+          id = spawnEntity(0, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 11);
+        } else if (roll < 0.88) {
+          // Type 1: Red Seeker Drone
+          const spd = 85 + Math.min(Game.wave * 7, 80);
+          id = spawnEntity(1, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 11);
+        } else {
+          // Type 2: Red Spiked Core
+          const spd = 60;
+          id = spawnEntity(2, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 13);
+        }
+        if (id >= 0) entLife[id] = HAZARD_LIFE_MIN + Math.random() * HAZARD_LIFE_VAR;
       }
 
       function triggerPhaseDash() {
@@ -1400,6 +1423,8 @@
 
         // Rule: Tapping Dash deducts 25 points from score
         addPoints(-25);
+        Game.dashHit = false;
+        Game.dashPending = true;
 
         let dx = Player.vx;
         let dy = Player.vy;
@@ -1465,6 +1490,7 @@
         }
 
         if (shatteredNow > 0) {
+          Game.dashHit = true;
           Game.shatteredTotal += shatteredNow;
           Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 1.4);
           Game.overdriveCharge = Math.min(100, Game.overdriveCharge + shatteredNow * 14);
@@ -1475,6 +1501,13 @@
           if (shatteredNow >= 2) {
             Player.dashCooldown *= 0.45;
           }
+        }
+
+        // Dash economy: a hit refunds the 25; a miss costs 1 multiplier step (never resets the chain)
+        if (Game.dashPending) {
+          Game.dashPending = false;
+          if (Game.dashHit) addPoints(25);
+          else if (Game.multiplier > 1) Game.multiplier--;
         }
 
         updateHUD();
@@ -1513,27 +1546,47 @@
           }
         }
 
-        Game.waveTimer += dt;
-        if (Game.waveTimer >= 9.0) {
-          Game.waveTimer = 0;
-          Game.wave++;
-          spawnWaveHazards(2 + Math.min(4, (Game.wave >> 1)));
-          // Every new wave restores both shields (outer + inner)
-          if (Game.shields < 2) {
-            Game.shields = 2;
-            Synth.playShieldRestore();
-            spawnShockwave(Player.x, Player.y, 95, 4);
-            emitBurst(Player.x, Player.y, 14, 170, 4);
+        // WAVE FLOW: budgeted spawns (with warnings) -> calm window -> next wave
+        Game.spawnGap -= dt;
+        for (let p = pendCount - 1; p >= 0; p--) {
+          pendT[p] -= dt;
+          if (pendT[p] <= 0) {
+            spawnHazardAt(pendX[p], pendY[p]);
+            const last = --pendCount;
+            if (p !== last) { pendX[p] = pendX[last]; pendY[p] = pendY[last]; pendT[p] = pendT[last]; }
           }
         }
-
-        let activeHazards = 0;
-        for (let i = 0; i < entCount; i++) {
-          if (entType[i] !== 3) activeHazards++;
-        }
-        const targetMin = 4 + Math.min(14, Game.wave * 2);
-        if (activeHazards < targetMin) {
-          spawnWaveHazards(2);
+        if (Game.calmTimer > 0) {
+          Game.calmTimer -= dt;
+          if (Game.calmTimer <= 0) {
+            Game.calmTimer = 0;
+            Game.wave++;
+            Game.waveBudget = waveBudgetFor(Game.wave);
+            Game.spawnGap = 0.3;
+            // Every new wave restores both shields (outer + inner)
+            if (Game.shields < 2) {
+              Game.shields = 2;
+              Synth.playShieldRestore();
+              spawnShockwave(Player.x, Player.y, 95, 4);
+              emitBurst(Player.x, Player.y, 14, 170, 4);
+            }
+          }
+        } else if (Game.waveBudget > 0) {
+          let live = pendCount; // pending spawns count toward the total
+          for (let i = 0; i < entCount; i++) {
+            if (entType[i] !== 3) live++;
+          }
+          if (live < hazardCapFor(Game.wave) && Game.spawnGap <= 0) {
+            queueSpawn();
+            Game.waveBudget--;
+            Game.spawnGap = 0.45;
+          }
+        } else if (pendCount === 0) {
+          // Whole wave has spawned: start the calm window and make the box really empty
+          Game.calmTimer = CALM_TIME;
+          for (let i = 0; i < entCount; i++) {
+            if (entType[i] !== 3 && entLife[i] > CALM_LIFE_CAP) entLife[i] = CALM_LIFE_CAP;
+          }
         }
 
         if (Game.multiplier > 1 || Game.comboTimer > 0) {
@@ -1669,18 +1722,19 @@
         }
         updateDashFx(dt);
 
-        // Check Green Prism Pickup (+100 × Multiplier)
+        // Check Green Prism Pickup (100 × multiplier, multiplier capped at ×8)
         Prism.angle += dt * 2.4;
         Prism.pulse += dt * 5.0;
         const pickupDist = Player.radius + Prism.radius + 4;
         // Swept: counts if the core passed through the pickup zone at any point this step
         if (ptSegDist(Prism.x, Prism.y, prevPX, prevPY, Player.x, Player.y) <= pickupDist) {
-          Game.multiplier = Math.min(64, Game.multiplier + 1);
+          const prismPts = 100 * Game.multiplier; // multiplier applies to green targets only
+          Game.multiplier = Math.min(8, Game.multiplier + 1);
           if (Game.multiplier > Game.peakMultiplier) {
             Game.peakMultiplier = Game.multiplier;
           }
           Game.comboTimer = Game.comboMaxTime;
-          addPoints(100);
+          addPoints(prismPts);
           Game.overdriveCharge = Math.min(100, Game.overdriveCharge + 15);
           Player.dashCooldown *= 0.55;
 
@@ -1700,6 +1754,14 @@
           entPX[i] = entX[i];
           entPY[i] = entY[i];
           entPhase[i] += dt * 4.0;
+          if (type !== 3) {
+            entLife[i] -= dt;
+            if (entLife[i] <= 0) {
+              emitBurst(entX[i], entY[i], 6, 90, 2);
+              removeEntity(i);
+              continue;
+            }
+          }
           if (entGrazeCooldown[i] > 0) {
             entGrazeCooldown[i] = Math.max(0, entGrazeCooldown[i] - dt);
           }
@@ -1771,6 +1833,7 @@
               contacts[contactCount++] = id;
             } else if (gap <= reach && entGrazeCooldown[id] <= 0) {
               entGrazeCooldown[id] = 1.1;
+              if (entGrazeCount[id] < 3) { entGrazeCount[id]++; addPoints(10); }
               Game.overdriveCharge = Math.min(100, Game.overdriveCharge + 6);
               Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 0.45);
               Synth.playGraze();
@@ -1785,6 +1848,7 @@
         for (let k = contactCount - 1; k >= 0; k--) {
           const id = contacts[k];
           if (entType[id] === 3) {
+            addPoints(15); // flat, never multiplied
             Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 0.35);
             Synth.playShard();
             emitBurst(entX[id], entY[id], 6, 110, 3);
@@ -1795,6 +1859,7 @@
             entType[id] = 3;
             entRadius[id] = 6.5;
             Game.shatteredTotal++;
+            Game.dashHit = true;
             shatteredNow++;
             emitBurst(sx, sy, 12, 180, 3);
           } else if (Player.invulnTimer <= 0) {
@@ -1951,6 +2016,24 @@
         ctx.fill();
         ctx.restore();
 
+        // Combo ring: shrinks with the chain timer; label = multiplier the next green pays
+        if (Game.multiplier > 1 && Game.comboTimer > 0) {
+          const frac = Math.max(0, Math.min(1, Game.comboTimer / Game.comboMaxTime));
+          ctx.save();
+          ctx.strokeStyle = frac < 0.3 ? COLORS[2] : COLORS[1];
+          ctx.lineWidth = 3;
+          ctx.lineCap = 'round';
+          ctx.beginPath();
+          ctx.arc(Prism.x, Prism.y, Prism.radius * 2.4, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac);
+          ctx.stroke();
+          ctx.fillStyle = '#F8FAFC';
+          ctx.font = 'bold 13px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('\u00D7' + Game.multiplier, Prism.x, Prism.y - Prism.radius * 2.4 - 11);
+          ctx.restore();
+        }
+
         // 4. Tail: tapered glowing ribbon, dash afterimages and speed streaks
         ctx.save();
         const tailCol = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
@@ -2005,6 +2088,23 @@
         }
         ctx.restore();
 
+        // Spawn warnings on the border
+        for (let p = 0; p < pendCount; p++) {
+          const f = 1 - pendT[p] / SPAWN_WARN;
+          ctx.save();
+          ctx.strokeStyle = COLORS[2];
+          ctx.fillStyle = COLORS[2];
+          ctx.globalAlpha = 0.35 + 0.65 * f;
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(pendX[p], pendY[p], 18 - 10 * f, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(pendX[p], pendY[p], 3 + 3 * f, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
         // 5. Entities: Unified Crimson-Red Enemy Drones (Types 0, 1, 2) & Golden Shards (Type 3)
         for (let i = 0; i < entCount; i++) {
           const type = entType[i];
@@ -2024,13 +2124,14 @@
             ctx.fill();
           } else {
             ctx.strokeStyle = COLORS[2];
-            ctx.globalAlpha = 0.18;
+            const fade = Math.max(0, Math.min(1, entLife[i] / HAZARD_FADE));
+            ctx.globalAlpha = 0.18 * fade;
             ctx.lineWidth = 1;
             ctx.beginPath();
             ctx.arc(0, 0, r + 16, 0, Math.PI * 2);
             ctx.stroke();
 
-            ctx.globalAlpha = 1;
+            ctx.globalAlpha = fade;
             ctx.fillStyle = COLORS[2];
             ctx.strokeStyle = '#FDA4AF';
             ctx.lineWidth = 1.2;
@@ -2219,8 +2320,13 @@
           trailY[i] = Player.y;
         }
 
+        pendCount = 0;
+        Game.waveBudget = waveBudgetFor(1);
+        Game.calmTimer = 0;
+        Game.spawnGap = 0.2;
+        Game.dashHit = false;
+        Game.dashPending = false;
         relocatePrism();
-        spawnWaveHazards(5);
 
         UI.canvasOverlay.classList.add('hidden');
         UI.pauseGameBtn.disabled = false;
@@ -2548,7 +2654,10 @@
       window.onload = function () {
         applyLayout();
         if (window.ResizeObserver) new ResizeObserver(() => resizeCanvas()).observe(UI.monitorFrame);
-        spawnWaveHazards(5);
+        // Idle-screen backdrop: a few hazards placed immediately (no warning needed)
+        for (let i = 0; i < 5; i++) queueSpawn();
+        for (let q = 0; q < pendCount; q++) spawnHazardAt(pendX[q], pendY[q]);
+        pendCount = 0;
         applyTheme();
         renderMatchHistory();
         updateScoreUI();
