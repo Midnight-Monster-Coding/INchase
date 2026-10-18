@@ -432,6 +432,15 @@
 
     <!-- CONTROL STRIP -->
     <div id="strip" class="flex flex-wrap items-center justify-end gap-2.5">
+      <div id="modeBar" class="flex flex-wrap items-center gap-1.5 mr-auto" role="group" aria-label="Game mode">
+        <button type="button" data-mode="arcade" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">ARCADE</button>
+        <button type="button" data-mode="blitz" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">BLITZ</button>
+        <button type="button" data-mode="swarm" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">SWARM</button>
+        <button type="button" data-mode="rain" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">RAIN</button>
+        <button type="button" data-mode="prism" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">PRISM</button>
+        <button type="button" data-mode="weave" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">WEAVER</button>
+        <button type="button" data-mode="titan" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">TITAN</button>
+      </div>
       <button id="audioToggleBtn" type="button" class="retro-key px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5" title="Toggle Synth Audio">
         <span id="audioDot" class="w-3 h-3 rounded-full border-2 border-black bg-emerald-400"></span>
         <span id="audioLabel" class="desk-only">SYNTH ON</span><span id="audioLabelM" class="mob-only">SND</span>
@@ -477,7 +486,6 @@
 
               <div class="mt-5">
                 <button id="overlayPrimaryBtn" type="button" class="retro-key retro-key-active w-full py-3 px-6 rounded-xl text-sm tracking-wide">START</button>
-                <button id="overlayModeBtn" type="button" class="retro-key c-cyan w-full mt-2.5 py-2 px-6 rounded-xl text-xs tracking-wide">BLITZ 90s</button>
               </div>
             </div>
           </div>
@@ -569,8 +577,10 @@
         <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">RED</span> Stay away. A hit costs one shield. Each wave sends a fixed number of drones. A red marker on the edge warns you 0.6 seconds before one appears. Drones fade away after about 9 seconds, and a short calm between waves clears the box.</li>
         <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#FBBF24">SHARD</span> A broken drone drops a gold shard. Grab it for +15 points. Shards are never multiplied.</li>
         <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GRAZE</span> Skim close to a red drone without touching it for +10 points, up to 3 times per drone.</li>
+        <li><span class="nb-pill c-lime" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">MODES</span> Pick a mode with the buttons above the arena before you start. ARCADE is endless with a random twist each wave. BLITZ is 90 seconds. SWARM is all seekers. RAIN is fast drifters and needle darts. PRISM keeps the green target moving. WEAVER is snaking triangle darts. TITAN is huge hexagons and lunging needles. Only ARCADE counts for the leaderboard. Every other mode keeps its own best on this device.</li>
+        <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">SHAPES</span> Diamonds drift. Arrows chase you. Spiked cores are slow. Triangles snake side to side. Big hexagons are slow but wide. Thin needles creep, then lunge. Sizes vary a little. All red shapes cost a shield.</li>
         <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">TWIST</span> Every wave has a twist, shown as a banner, such as SEEKER SWARM or MOVING PRISM. Every 5th wave adds a big boss drone. At 0 shields, time slows once per wave when a drone is about to hit you.</li>
-        <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">BLITZ</span> A 90 second timed run. Use the BLITZ button on the start or game over screen. Its best score is kept separate from arcade.</li>
+        <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">BLITZ</span> A 90 second timed run. Pick it with the mode buttons above the arena. Its best score is kept separate from arcade.</li>
         <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A78BFA">OUTER</span> <span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A3E635">INNER</span> You have 2 shield rings. The violet outer ring breaks first, then the lime inner ring. A hit with no ring left ends the run. Both rings come back at every new wave.</li>
         <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GHOST</span> Fills from greens, grazes and broken drones. It cannot refill while it is running. <span class="desk-only">Press E or wheel click when full.</span><span class="mob-only">Tap GHOST when full.</span></li>
         <li><span class="desk-only">Move with mouse, WASD or arrows. P to pause.</span><span class="mob-only">Move with the stick. Use the button under it to switch to arrows.</span></li>
@@ -905,14 +915,20 @@
           const p1 = inner(a + Math.PI / 6);
           star.push([p0[0], p0[1], Math.cos(a) * 1.15, Math.sin(a) * 1.15, p1[0], p1[1]]);
         }
+        const bigHex = [];
+        for (let j = 0; j < 6; j++) bigHex.push(Math.cos((j * Math.PI) / 3), Math.sin((j * Math.PI) / 3));
         return [
           [[0, -1, 1, 0, 0, 1, -1, 0]],                                    // 0: diamond
           [[1.3, 0, -1, 0.85, -0.45, 0], [1.3, 0, -0.45, 0, -1, -0.85]],    // 1: arrow (notched -> 2 triangles)
-          star                                                              // 2: spiked core (hexagon + 6 spikes)
+          star,                                                             // 2: spiked core (hexagon + 6 spikes)
+          [],                                                               // 3: shard (no hazard shape)
+          [[1.2, 0, -0.9, 0.8, -0.9, -0.8]],                                // 4: weaver (triangle dart)
+          [bigHex],                                                         // 5: titan (big hexagon)
+          [[1.6, 0, 0, 0.3, -0.7, 0, 0, -0.3]]                              // 6: needle (long thin rhombus)
         ];
       })();
       // Radius of a circle that fully contains each silhouette (cheap broad phase)
-      const HAZARD_BOUND = [1.0, 1.32, 1.15];
+      const HAZARD_BOUND = [1.0, 1.32, 1.15, 1.0, 1.2, 1.0, 1.6];
 
       const contacts = new Int16Array(MAX_ENTITIES);
       let contactCount = 0;
@@ -991,7 +1007,8 @@
         // Same orientation the renderer uses for each type
         let ang;
         if (type === 0) ang = entPhase[i] * 0.6;
-        else if (type === 1) ang = Math.atan2(entVY[i], entVX[i]);
+        else if (type === 1 || type === 4 || type === 6) ang = Math.atan2(entVY[i], entVX[i]);
+        else if (type === 5) ang = entPhase[i] * 0.25;
         else ang = -entPhase[i] * 0.4;
         const cs = Math.cos(ang);
         const sn = Math.sin(ang);
@@ -1244,7 +1261,6 @@
         statFinalScore: document.getElementById('statFinalScore'),
         statBestScore: document.getElementById('statBestScore'),
         newBestTag: document.getElementById('newBestTag'),
-        overlayModeBtn: document.getElementById('overlayModeBtn'),
         rivalMsg: document.getElementById('rivalMsg'),
         bestBtn: document.getElementById('bestBtn'),
         bestModal: document.getElementById('bestModal'),
@@ -1337,6 +1353,27 @@
         fillHistory(UI.runsList);
       }
 
+      // Mode buttons above the arena: pick before a run (locked while a run is going)
+      const MODE_BTNS = Array.from(document.querySelectorAll('#modeBar [data-mode]'));
+      let lastModeKey = '';
+      function syncModeBar() {
+        const key = Game.mode + '|' + Game.state;
+        if (key === lastModeKey) return;
+        lastModeKey = key;
+        const free = Game.state === 'idle' || Game.state === 'gameover';
+        MODE_BTNS.forEach((b) => {
+          b.classList.toggle('retro-key-active', b.dataset.mode === Game.mode);
+          b.disabled = !free;
+          b.style.opacity = free || b.dataset.mode === Game.mode ? '' : '0.45';
+        });
+      }
+      document.getElementById('modeBar').addEventListener('click', (e) => {
+        const b = e.target.closest('[data-mode]');
+        if (!b || b.disabled) return;
+        Game.mode = b.dataset.mode;
+        updateHUD();
+      });
+
       function updateHUD() {
         if (Game.overdriveTimer > 0) {
           const odPct = (Game.overdriveTimer / 6.0) * 100;
@@ -1354,6 +1391,7 @@
         UI.hudShieldCount.textContent = 'SHIELDS: ' + Game.shields;
         UI.hudWaveM.textContent = waveLabel;
         UI.hudShieldM.textContent = 'SHIELDS: ' + Game.shields;
+        syncModeBar();
       }
 
       /* =========================================================================
@@ -1425,26 +1463,34 @@
         pendCount++;
       }
 
-      // One twist per wave (t0/t1 = cumulative type odds: drifter / seeker / spiked, spd = speed scale)
+      // A twist = which enemy types spawn (type, weight), a speed scale, and whether the green target moves.
+      // Types: 0 drifter, 1 seeker, 2 spiked core, 4 weaver (snaking dart), 5 titan (huge, slow), 6 needle (lunges)
       const TWISTS = [
-        { name: '', t0: 0.6, t1: 0.88, spd: 1 },
-        { name: 'SEEKER SWARM', t0: 0.12, t1: 0.9, spd: 1 },
-        { name: 'DRIFTER RAIN', t0: 0.9, t1: 0.97, spd: 1.2 },
-        { name: 'SPIKE FIELD', t0: 0.25, t1: 0.4, spd: 1 },
-        { name: 'MOVING PRISM', t0: 0.6, t1: 0.88, spd: 1, prism: true }
+        { name: '', mix: [[0, 0.6], [1, 0.28], [2, 0.12]], spd: 1 },
+        { name: 'SEEKER SWARM', mix: [[0, 0.12], [1, 0.78], [2, 0.1]], spd: 1 },
+        { name: 'DRIFTER RAIN', mix: [[0, 0.8], [6, 0.2]], spd: 1.2 },
+        { name: 'SPIKE FIELD', mix: [[0, 0.25], [1, 0.15], [2, 0.6]], spd: 1 },
+        { name: 'MOVING PRISM', mix: [[0, 0.6], [1, 0.28], [2, 0.12]], spd: 1, prism: true },
+        { name: 'WEAVER WAVE', mix: [[4, 0.7], [0, 0.2], [1, 0.1]], spd: 1 },
+        { name: 'TITAN WAVE', mix: [[5, 0.4], [6, 0.35], [0, 0.25]], spd: 1 }
       ];
+      // Modes that lock one twist for the whole run (arcade and blitz pick a random twist per wave)
+      const MODE_TWIST = { swarm: 1, rain: 2, prism: 4, weave: 5, titan: 6 };
       function pickTwist(w) {
+        const lock = MODE_TWIST[Game.mode];
+        if (lock !== undefined) return TWISTS[lock];
         if (w < 2) return TWISTS[0];
         let t;
         do { t = TWISTS[1 + ((Math.random() * (TWISTS.length - 1)) | 0)]; } while (t === Game.twist);
         return t;
       }
       function startWave(w) {
+        const locked = MODE_TWIST[Game.mode] !== undefined;
         Game.twist = pickTwist(w);
         Game.waveBudget = waveBudgetFor(w);
         Game.bossPending = w % 5 === 0;
         Game.slowUsed = false;
-        Game.bannerText = Game.bossPending ? 'BOSS WAVE' : Game.twist.name;
+        Game.bannerText = Game.bossPending ? 'BOSS WAVE' : (locked && w > 1 ? '' : Game.twist.name);
         Game.bannerSub = 'WAVE ' + w + (Game.bossPending && Game.twist.name ? ' \u00B7 ' + Game.twist.name : '');
         Game.bannerT = (Game.bannerText || w > 1) ? 2.2 : 0;
         if (Game.twist.prism) {
@@ -1455,6 +1501,15 @@
           Prism.vx = 0;
           Prism.vy = 0;
         }
+      }
+      function pickType(mix) {
+        const roll = Math.random();
+        let acc = 0;
+        for (let k = 0; k < mix.length; k++) {
+          acc += mix[k][1];
+          if (roll < acc) return mix[k][0];
+        }
+        return mix[mix.length - 1][0];
       }
 
       function spawnHazardAt(sx, sy, boss) {
@@ -1467,18 +1522,19 @@
           return;
         }
         const tw = Game.twist || TWISTS[0];
-        const roll = Math.random();
-        let id;
-        if (roll < tw.t0) {
-          const spd = (95 + Math.min(Game.wave * 8, 90)) * tw.spd;   // Type 0: Red Diamond Drifter
-          id = spawnEntity(0, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 11);
-        } else if (roll < tw.t1) {
-          const spd = (85 + Math.min(Game.wave * 7, 80)) * tw.spd;   // Type 1: Red Seeker Drone
-          id = spawnEntity(1, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 11);
-        } else {
-          const spd = 60;                                            // Type 2: Red Spiked Core
-          id = spawnEntity(2, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 13);
-        }
+        const type = pickType(tw.mix);
+        const w = Game.wave;
+        let r;
+        let spd;
+        if (type === 0) { r = 11; spd = 95 + Math.min(w * 8, 90); }
+        else if (type === 1) { r = 11; spd = 85 + Math.min(w * 7, 80); }
+        else if (type === 2) { r = 13; spd = 60; }
+        else if (type === 4) { r = 10; spd = 105 + Math.min(w * 6, 70); }
+        else if (type === 5) { r = 19 + Math.random() * 8; spd = 38; }
+        else { r = 6 + Math.random() * 2.5; spd = 200 + Math.min(w * 6, 60); }
+        if (type === 0 || type === 1 || type === 4) r *= 0.85 + Math.random() * 0.35;  // size variety
+        spd *= tw.spd;
+        const id = spawnEntity(type, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, r);
         if (id >= 0) entLife[id] = HAZARD_LIFE_MIN + Math.random() * HAZARD_LIFE_VAR;
       }
 
@@ -1865,6 +1921,14 @@
             const desiredSpd = 110 + Math.min(Game.wave * 6, 75);
             entVX[i] += ((sx / slen) * desiredSpd - entVX[i]) * dt * 1.8 * hazardTimeScale;
             entVY[i] += ((sy / slen) * desiredSpd - entVY[i]) * dt * 1.8 * hazardTimeScale;
+          } else if (type === 4) {
+            // Weaver: velocity swings left and right, so it snakes along
+            const wv = Math.cos(entPhase[i] * 0.55) * 2.4 * dt * hazardTimeScale;
+            const wc = Math.cos(wv);
+            const ws = Math.sin(wv);
+            const wvx = entVX[i] * wc - entVY[i] * ws;
+            entVY[i] = entVX[i] * ws + entVY[i] * wc;
+            entVX[i] = wvx;
           } else if (type === 3) {
             // Golden Shard: magnetically pulled toward Player
             const gx = Player.x - entX[i];
@@ -1881,7 +1945,8 @@
             }
           }
 
-          const stepScale = type === 3 ? 1.0 : hazardTimeScale;
+          let stepScale = type === 3 ? 1.0 : hazardTimeScale;
+          if (type === 6) stepScale *= 0.55 + 0.95 * Math.max(0, Math.sin(entPhase[i] * 0.7)); // needle: creeps, then lunges
           entX[i] += entVX[i] * dt * stepScale;
           entY[i] += entVY[i] * dt * stepScale;
 
@@ -2251,6 +2316,39 @@
               ctx.closePath();
               ctx.fill();
               ctx.stroke();
+            } else if (type === 4) {
+              ctx.rotate(Math.atan2(entVY[i], entVX[i]));
+              ctx.beginPath();
+              ctx.moveTo(r * 1.2, 0);
+              ctx.lineTo(-r * 0.9, r * 0.8);
+              ctx.lineTo(-r * 0.9, -r * 0.8);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+            } else if (type === 5) {
+              ctx.rotate(entPhase[i] * 0.25);
+              for (let pass = 0; pass < 2; pass++) {
+                const hr = pass === 0 ? r : r * 0.55;
+                ctx.beginPath();
+                for (let s2 = 0; s2 < 6; s2++) {
+                  const a2 = (s2 * Math.PI) / 3;
+                  if (s2 === 0) ctx.moveTo(Math.cos(a2) * hr, Math.sin(a2) * hr);
+                  else ctx.lineTo(Math.cos(a2) * hr, Math.sin(a2) * hr);
+                }
+                ctx.closePath();
+                if (pass === 0) ctx.fill();
+                ctx.stroke();
+              }
+            } else if (type === 6) {
+              ctx.rotate(Math.atan2(entVY[i], entVX[i]));
+              ctx.beginPath();
+              ctx.moveTo(r * 1.6, 0);
+              ctx.lineTo(0, r * 0.3);
+              ctx.lineTo(-r * 0.7, 0);
+              ctx.lineTo(0, -r * 0.3);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
             } else {
               ctx.rotate(-entPhase[i] * 0.4);
               ctx.beginPath();
@@ -2462,7 +2560,6 @@
           UI.pauseBtnText.textContent = 'RESUME';
           UI.overlayStats.classList.add('hidden');
           UI.newBestTag.classList.add('hidden');
-          UI.overlayModeBtn.classList.add('hidden');
           UI.overlayBadge.textContent = 'PAUSED';
           UI.overlayTitle.textContent = 'PAUSED';
           UI.overlayPrimaryBtn.textContent = 'RESUME';
@@ -2498,16 +2595,18 @@
         UI.pauseGameBtn.disabled = true;
 
         const isBlitz = Game.mode === 'blitz';
+        const isArcade = Game.mode === 'arcade';
+        const bestKey = isBlitz ? 'inchase_blitz_best' : 'inchase_best_' + Game.mode;
         let isNewBest;
         let bestShown;
-        if (isBlitz) {
-          // Blitz keeps its own local best so it never mixes into the arcade board
+        if (!isArcade) {
+          // Every non-arcade mode keeps its own local best so none mix into the arcade board
           let bb = 0;
-          try { bb = Number(localStorage.getItem('inchase_blitz_best')) || 0; } catch (e) {}
+          try { bb = Number(localStorage.getItem(bestKey)) || 0; } catch (e) {}
           isNewBest = Game.score > bb;
           if (isNewBest) {
             bb = Game.score;
-            try { localStorage.setItem('inchase_blitz_best', String(bb)); } catch (e) {}
+            try { localStorage.setItem(bestKey, String(bb)); } catch (e) {}
           }
           bestShown = bb;
           store.total++;
@@ -2528,10 +2627,8 @@
         UI.overlayBadge.textContent = 'GAME OVER';
         UI.overlayTitle.textContent = isBlitz ? 'BLITZ COMPLETE' : 'WAVE ' + Game.wave + ' REACHED';
         UI.overlayPrimaryBtn.textContent = 'PLAY AGAIN';
-        UI.overlayModeBtn.textContent = isBlitz ? 'PLAY ARCADE' : 'BLITZ 90s';
-        UI.overlayModeBtn.classList.remove('hidden');
         UI.rivalMsg.classList.add('hidden');
-        if (!isBlitz && Game.score > 0) showRival(Game.score);
+        if (isArcade && Game.score > 0) showRival(Game.score);
         UI.canvasOverlay.classList.remove('hidden');
         updateHUD();
         renderArena();
@@ -2585,10 +2682,6 @@
       });
       UI.pauseGameBtn.addEventListener('click', togglePause);
       UI.restartGameBtn.addEventListener('click', startNewRun);
-      UI.overlayModeBtn.addEventListener('click', () => {
-        Game.mode = Game.mode === 'blitz' ? 'arcade' : 'blitz';
-        startNewRun();
-      });
 
       UI.overlayPrimaryBtn.addEventListener('click', () => {
         if (Game.state === 'paused') togglePause();
