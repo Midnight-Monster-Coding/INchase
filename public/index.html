@@ -40,7 +40,7 @@
       --lime: #34D399;
       --orange: #FBBF24;
       --canvas-bg: #0B0E14;
-      --arena-h: clamp(290px, 48vh, 415px);
+      --arena-h: clamp(220px, calc(100vh - 410px), 415px);
     }
     /* ALTERNATE: bright neo-brutalism */
     html.light-mode {
@@ -323,8 +323,13 @@
 
     /* ---------- Auth / account ---------- */
     input, textarea { user-select: text; -webkit-user-select: text; }
-    .name-input { background: transparent; border: 0; outline: 0; color: var(--text); font: inherit; font-size: 20px; width: 100%; min-width: 0; text-transform: none; }
-    .name-input.sm { font-size: 14px; }
+    .name-input { background: transparent; border: 0; outline: 0; color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-weight: 600; letter-spacing: 0; font-size: 20px; width: 100%; min-width: 0; text-transform: none; }
+    /* Keep usernames in their real letter case (Bungee only has capitals) */
+    #chipName, #aName { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-weight: 700; letter-spacing: 0; }
+    #chipAvatar { width: 24px; height: 24px; border-width: 2px; font-size: 11px; }
+    /* Desktop: fit everything in one frame, no page scroll (small windows may still scroll) */
+    @media (min-height: 640px) { html:not(.mob) body { height: 100vh; overflow: hidden; } }
+    .name-input.sm { font-size: 15px; }
     .name-input::placeholder { color: var(--text); opacity: 0.35; }
     .auth-modal > div { max-height: 92vh; max-height: 92dvh; overflow-y: auto; }
     .chip-avatar { width: 32px; height: 32px; border-radius: 50%; overflow: hidden; border: 3px solid var(--ink); display: flex; align-items: center; justify-content: center; flex: 0 0 auto; font-size: 13px; }
@@ -466,8 +471,8 @@
       </div>
     </div>
 
-    <footer class="app-foot pt-3 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-      <button id="accountChip" type="button" class="retro-key c-white justify-self-start flex items-center gap-2 pl-1 pr-3 py-1 rounded-full text-xs" title="Login to save your scores">
+    <footer class="app-foot pt-2 grid grid-cols-[1fr_auto_1fr] items-center gap-2">
+      <button id="accountChip" type="button" class="retro-key c-white justify-self-start flex items-center gap-2 pl-0.5 pr-3 py-0.5 rounded-full text-xs" title="Login to save your scores">
         <span id="chipAvatar" class="chip-avatar"></span>
         <span id="chipName">LOGIN</span>
       </button>
@@ -532,10 +537,10 @@
       <div class="text-[10px] opacity-70 my-3 tracking-widest">OR USE EMAIL</div>
 
       <div class="retro-bay rounded-xl px-3 py-2.5">
-        <input id="emailInput" class="name-input sm" type="email" placeholder="EMAIL" autocomplete="email" inputmode="email" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <input id="emailInput" class="name-input sm" type="email" placeholder="you@example.com" autocomplete="email" inputmode="email" autocapitalize="off" autocorrect="off" spellcheck="false" />
       </div>
       <div class="retro-bay rounded-xl px-3 py-2.5 mt-2">
-        <input id="passInput" class="name-input sm" type="password" placeholder="PASSWORD (6+ CHARACTERS)" autocomplete="current-password" />
+        <input id="passInput" class="name-input sm" type="password" placeholder="password (6+ characters)" autocomplete="current-password" />
       </div>
       <div class="grid grid-cols-2 gap-3 mt-3">
         <button id="emailLoginBtn" type="button" class="retro-key retro-key-active py-2.5 rounded-xl text-xs">LOGIN</button>
@@ -556,7 +561,7 @@
       <p class="text-[10px] leading-relaxed opacity-80">3-16 CHARACTERS. LETTERS, NUMBERS AND _ ONLY.</p>
       <div class="retro-bay rounded-xl flex items-center gap-1 px-3 py-2.5 mt-4">
         <span class="text-2xl leading-none">#</span>
-        <input id="nameInput" class="name-input" type="text" maxlength="16" placeholder="USERNAME" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
+        <input id="nameInput" class="name-input" type="text" maxlength="16" placeholder="username" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" />
       </div>
       <div id="nameStatus" class="text-[11px] mt-3 min-h-[28px]"></div>
       <button id="nameSaveBtn" type="button" disabled class="retro-key retro-key-active w-full mt-2 py-3 px-6 rounded-xl text-sm tracking-wide">CONFIRM</button>
