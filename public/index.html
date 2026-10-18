@@ -1,0 +1,2211 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>INchase — Developed by IAB</title>
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Bungee&display=swap" rel="stylesheet" />
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Bungee', 'system-ui', 'sans-serif'],
+            display: ['Bungee', 'system-ui', 'sans-serif'],
+            mono: ['Bungee', 'system-ui', 'sans-serif'],
+            retro: ['Bungee', 'system-ui', 'sans-serif']
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    /* DEFAULT: dark retro hardware + neo-brutalist slabs */
+    :root {
+      --page: #08090C;
+      --ink: #000000;
+      --text: #ECEFF4;
+      --paper: #12151C;
+      --white: #1B1F2B;
+      --hard: #38BDF8;
+      --rule: #2F3750;
+      --bevel: rgba(255, 255, 255, 0.09);
+      --pink: #FB7185;
+      --cyan: #38BDF8;
+      --lime: #34D399;
+      --orange: #FBBF24;
+      --canvas-bg: #0B0E14;
+      --arena-h: clamp(290px, 48vh, 415px);
+    }
+    /* ALTERNATE: bright neo-brutalism */
+    html.light-mode {
+      --page: #FFD93D;
+      --ink: #0A0A0A;
+      --text: #0A0A0A;
+      --paper: #FFF8E7;
+      --white: #FFFFFF;
+      --hard: #0A0A0A;
+      --rule: #0A0A0A;
+      --bevel: rgba(0, 0, 0, 0);
+      --pink: #FF6B9D;
+      --cyan: #4CC9F0;
+      --lime: #B8F34A;
+      --orange: #FF9F1C;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+
+    body {
+      background-color: var(--page);
+      background-image:
+        linear-gradient(rgba(56, 189, 248, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(56, 189, 248, 0.05) 1px, transparent 1px);
+      background-size: 28px 28px;
+      color: var(--text);
+      font-family: 'Bungee', system-ui, sans-serif;
+      margin: 0; padding: 0; overflow-x: hidden;
+    }
+    html.light-mode body {
+      background-image: radial-gradient(rgba(0,0,0,0.22) 1.4px, transparent 1.4px);
+      background-size: 22px 22px;
+    }
+    /* Retro CRT scanlines over the whole page (dark theme only) */
+    body::before {
+      content: "";
+      position: fixed; inset: 0; pointer-events: none; z-index: 60;
+      background: linear-gradient(rgba(0,0,0,0) 50%, rgba(0,0,0,0.14) 50%);
+      background-size: 100% 4px;
+    }
+    html.light-mode body::before { display: none; }
+
+    .tabular-nums { font-variant-numeric: tabular-nums; }
+    .t-ink { color: var(--text); }
+
+    .c-lime { background-color: var(--lime); }
+    .c-pink { background-color: var(--pink); }
+    .c-cyan { background-color: var(--cyan); }
+    .c-orange { background-color: var(--orange); }
+    .c-white { background-color: var(--white); }
+
+    /* Slab: thick outline + hard offset shadow (+ retro bevel highlight) */
+    .retro-chassis {
+      background-color: var(--paper);
+      border: 4px solid var(--ink);
+      box-shadow: inset 0 0 0 2px var(--bevel), 10px 10px 0 var(--hard);
+      color: var(--text);
+    }
+    .retro-bay {
+      background-color: var(--white);
+      border: 3px solid var(--ink);
+      box-shadow: inset 0 2px 0 var(--bevel), 4px 4px 0 var(--ink);
+      color: var(--text);
+    }
+    .nb-pill {
+      border: 3px solid var(--ink);
+      box-shadow: 3px 3px 0 var(--ink);
+      border-radius: 10px;
+      padding: 3px 10px;
+      color: #0A0A0A;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    /* Pressable 3D key */
+    .retro-key {
+      background-color: var(--white);
+      color: var(--text);
+      border: 3px solid var(--ink);
+      box-shadow: inset 0 2px 0 var(--bevel), 4px 4px 0 var(--ink);
+      transition: transform 0.08s ease, box-shadow 0.08s ease;
+      cursor: pointer;
+    }
+    .retro-key:hover:not(:disabled) {
+      transform: translate(-2px, -2px);
+      box-shadow: inset 0 2px 0 var(--bevel), 6px 6px 0 var(--ink);
+    }
+    .retro-key:active:not(:disabled),
+    .retro-key.pressed {
+      transform: translate(4px, 4px);
+      box-shadow: 0 0 0 var(--ink);
+    }
+    .retro-key:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: 2px 2px 0 var(--ink); }
+    .retro-key-active { background-color: var(--cyan); }
+    .retro-key.c-lime { background-color: var(--lime); }
+    .retro-key.c-pink { background-color: var(--pink); }
+    .retro-key.c-cyan { background-color: var(--cyan); }
+    .retro-key.c-orange { background-color: var(--orange); }
+    .retro-key.c-white { background-color: var(--white); }
+    .retro-key.retro-key-active, .retro-key.c-lime, .retro-key.c-cyan,
+    .retro-key.c-orange, .retro-key.c-pink,
+    .retro-bay.c-orange, .retro-bay.c-lime { color: #0A0A0A; }
+
+    .monitor-bezel {
+      position: relative;
+      background-color: var(--canvas-bg);
+      border: 4px solid var(--ink);
+      box-shadow: 0 0 0 2px var(--rule), 6px 6px 0 var(--hard);
+    }
+    html.light-mode .monitor-bezel { box-shadow: 6px 6px 0 var(--ink); }
+
+    .scanlines::after {
+      content: "";
+      position: absolute; inset: 0; pointer-events: none;
+      background: linear-gradient(rgba(18,16,16,0) 50%, rgba(0,0,0,0.22) 50%);
+      background-size: 100% 4px;
+      z-index: 4;
+    }
+
+    #gameCanvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+    #monitorFrame { height: var(--arena-h); }
+
+    /* Intro splash */
+    #introSplash { background-color: var(--page); transition: opacity 0.6s ease, visibility 0.6s ease; }
+    #introSplash.fade-out { opacity: 0; visibility: hidden; pointer-events: none; }
+    @keyframes nbBlink { 0%,100% { opacity: 1; } 50% { opacity: 0.55; } }
+    .splash-title { animation: nbBlink 1.4s infinite ease-in-out; }
+
+    /* Points board */
+    .board { height: auto; max-height: 340px; }
+    @media (min-width: 1024px) { .board { height: var(--arena-h); max-height: none; } }
+    @keyframes nbPop {
+      0%   { opacity: 0; transform: translateY(8px) scale(0.8) rotate(-4deg); }
+      20%  { opacity: 1; transform: translateY(-2px) scale(1.15) rotate(2deg); }
+      75%  { opacity: 1; }
+      100% { opacity: 0; transform: translateY(-10px) scale(1); }
+    }
+    .nb-delta {
+      position: absolute; right: 0; top: -4px;
+      border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--ink);
+      border-radius: 10px; padding: 2px 8px; font-size: 14px; color: #0A0A0A;
+      opacity: 0; pointer-events: none;
+    }
+    .nb-delta.pos { background-color: var(--lime); }
+    .nb-delta.neg { background-color: var(--pink); }
+    .nb-delta.pop { animation: nbPop 0.9s ease-out forwards; }
+
+    .hist-row {
+      display: flex; align-items: center; gap: 8px;
+      border: 2px solid var(--ink); border-radius: 8px; background: var(--paper);
+      padding: 4px 8px; font-size: 11px; box-shadow: 2px 2px 0 var(--ink);
+      color: var(--text);
+    }
+    .hist-row.best { background: var(--orange); color: #0A0A0A; }
+    .hist-row .tot { margin-left: auto; }
+    #historyList::-webkit-scrollbar, #runsList::-webkit-scrollbar { width: 10px; }
+    #historyList::-webkit-scrollbar-thumb, #runsList::-webkit-scrollbar-thumb { background: var(--hard); border-radius: 6px; }
+      .app-head { border-bottom: 4px solid var(--rule); }
+    .app-foot { border-top: 4px solid var(--rule); }
+    .hist-title { border-top: 3px solid var(--rule); }
+
+    html, body { overscroll-behavior: none; }
+    body { -webkit-touch-callout: none; }
+    button { touch-action: manipulation; }
+    #infoModal > div, #bestModal > div { max-height: 92vh; max-height: 92dvh; overflow-y: auto; }
+
+    /* ---------- Virtual joystick ---------- */
+    :root { --joy: 124px; --side: 132px; }
+    #joystick {
+      display: none; position: relative; flex: 0 0 auto;
+      width: var(--joy); height: var(--joy); border-radius: 50%;
+      background: var(--white); border: 4px solid var(--ink);
+      box-shadow: inset 0 0 0 2px var(--bevel), 4px 4px 0 var(--ink);
+      touch-action: none;
+    }
+    #joystick::before {
+      content: ""; position: absolute; inset: 18%; border-radius: 50%;
+      border: 3px dashed var(--rule); opacity: 0.7; pointer-events: none;
+    }
+    #joyKnob {
+      position: absolute; left: 50%; top: 50%; width: 40%; height: 40%;
+      border-radius: 50%; background: var(--cyan); border: 3px solid var(--ink);
+      box-shadow: 3px 3px 0 var(--ink); transform: translate(-50%, -50%);
+      pointer-events: none; transition: transform 0.12s ease-out;
+    }
+    #joystick.active #joyKnob { transition: none; background: var(--lime); }
+
+    /* ---------- Mobile / touch layout (class set by JS) ---------- */
+    .mob-only { display: none; }
+    .board-mobile { display: none; }
+    .mob .mob-only { display: inline-block; }
+    .mob .desk-only { display: none; }
+    .mob.ctrl-stick #joystick { display: block; }
+    .mob.ctrl-stick #arrowPad { display: none; }
+
+    .mob body {
+      height: 100vh; height: 100dvh; min-height: 0; padding: 6px; overflow: hidden;
+      justify-content: flex-start;
+    }
+    .mob body::before { display: none; }
+    .mob #crtToggleBtn, .mob .app-foot { display: none; }
+
+    .mob #appMain {
+      display: grid; height: 100%; max-width: 900px; padding: 8px; gap: 8px; border-width: 3px;
+      box-shadow: inset 0 0 0 2px var(--bevel), 4px 4px 0 var(--hard);
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: auto auto minmax(0, 1fr);
+    }
+    .mob .app-head { padding-bottom: 6px; border-bottom-width: 3px; gap: 6px; flex-wrap: nowrap; }
+    .mob .app-logo { width: 36px; height: 36px; box-shadow: 2px 2px 0 var(--ink); }
+    .mob .app-title { font-size: 20px; text-shadow: 2px 2px 0 var(--cyan); }
+    .mob #hudWaveOrTime, .mob #hudShieldCount { display: none; }
+    .mob #bestBtn { height: 34px; padding: 0 10px; box-shadow: 3px 3px 0 var(--ink); }
+    .mob #infoBtn { width: 34px; height: 34px; box-shadow: 3px 3px 0 var(--ink); }
+
+    .mob #strip { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+    .mob #strip button {
+      padding: 7px 2px; font-size: 10px; justify-content: center; white-space: nowrap;
+      box-shadow: 3px 3px 0 var(--ink); border-width: 2px; border-radius: 8px;
+    }
+    .mob #audioDot { width: 10px; height: 10px; }
+
+    .mob #stage { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+    .mob #arenaRow { display: contents; }
+    .mob #monitorFrame { order: 1; flex: 1 1 0; min-height: 0; height: auto; border-width: 3px; box-shadow: 4px 4px 0 var(--hard); }
+
+    .mob .board {
+      order: 0; flex-direction: row; align-items: center; justify-content: space-between;
+      height: auto; max-height: none; padding: 6px 10px; gap: 8px; box-shadow: 3px 3px 0 var(--ink);
+    }
+    .mob .board-label, .mob .board-hints, .mob .board-hist { display: none; }
+    .mob .board-score { padding-right: 56px; }
+    .mob #hudScore { font-size: 30px; }
+    .mob .nb-delta { font-size: 12px; }
+    .mob .board-mobile { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+    .mob .board-mobile .nb-pill { font-size: 10px; padding: 2px 8px; box-shadow: 2px 2px 0 var(--ink); border-width: 2px; }
+
+    .mob #deck {
+      order: 2; display: grid; grid-template-columns: auto minmax(0, 1fr);
+      grid-template-rows: auto auto; column-gap: 10px; row-gap: 8px; align-items: center;
+      padding: 8px; box-shadow: 3px 3px 0 var(--ink);
+    }
+    .mob #padWrap { grid-column: 1; grid-row: 1 / span 2; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+    .mob #arrowPad button { width: 46px; }
+    .mob #arrowPad button { height: 42px; }
+    .mob #ctrlToggleBtn { padding: 4px 10px; font-size: 10px; border-radius: 8px; border-width: 2px; box-shadow: 2px 2px 0 var(--ink); white-space: nowrap; }
+    .mob #ghostBox { grid-column: 2; grid-row: 1; min-width: 0; max-width: none; }
+    .mob #actionBtns { grid-column: 2; grid-row: 2; display: grid; grid-template-columns: 1.25fr 1fr; gap: 8px; }
+    .mob #actionBtns button { width: 100%; padding: 16px 4px; font-size: 13px; }
+
+    .mob #canvasOverlay { overflow-y: auto; padding: 8px; }
+    .mob #canvasOverlay > div { padding: 14px; box-shadow: 5px 5px 0 var(--hard); }
+
+    /* Phone held sideways: stick left, buttons right, arena in the middle */
+    .mob.land { --joy: 104px; --side: clamp(128px, 17vw, 190px); }
+    .mob.land #appMain { grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); gap: 6px; padding: 6px 8px; }
+    .mob.land .app-head { grid-column: 1; grid-row: 1; padding-bottom: 0; border-bottom: none; }
+    .mob.land .app-title { font-size: 18px; }
+    .mob.land #strip { grid-column: 2; grid-row: 1; display: flex; justify-content: flex-end; flex-wrap: nowrap; }
+    .mob.land #strip button { padding: 6px 10px; }
+    .mob.land #stage { grid-column: 1 / -1; grid-row: 2; display: grid; grid-template-columns: var(--side) minmax(0, 1fr) var(--side); grid-template-rows: auto minmax(0, 1fr); gap: 8px; }
+    .mob.land #monitorFrame { grid-column: 2; grid-row: 1 / span 2; }
+    .mob.land .board { grid-column: 1; grid-row: 1; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 4px; padding: 6px 8px; }
+    .mob.land .board-score { padding-right: 0; }
+    .mob.land .board-mobile { justify-content: flex-start; }
+    .mob.land .board-mobile .nb-pill { font-size: 9px; padding: 1px 6px; }
+    .mob.land #hudScore { font-size: 26px; }
+    .mob.land #deck { display: contents; }
+    .mob.land #padWrap { grid-column: 1; grid-row: 2; grid-template-rows: none; align-self: end; justify-self: center; }
+    .mob.land #ghostBox { grid-column: 3; grid-row: 1; }
+    .mob.land #actionBtns { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; justify-content: flex-end; gap: 8px; }
+    .mob.land #actionBtns { align-self: stretch; }
+    .mob.land #actionBtns button { padding: 14px 4px; }
+    .mob.land #touchDashBtn { flex: 1 1 auto; }
+    .mob.land #canvasOverlay > div { padding: 10px; }
+    .mob.land #overlayTitle { font-size: 22px; }
+    .mob.land #overlayStats { margin-top: 8px; gap: 8px; }
+    .mob.land #statFinalScore, .mob.land #statBestScore { font-size: 20px; }
+    .mob.land #overlayPrimaryBtn { padding-top: 8px; padding-bottom: 8px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
+
+  <!-- INTRO SPLASH -->
+  <div id="introSplash" class="fixed inset-0 z-50 flex flex-col items-center justify-center select-none">
+    <div class="retro-chassis rounded-2xl px-8 py-8 text-center">
+      <div class="splash-title text-4xl sm:text-6xl tracking-wide t-ink" style="text-shadow: 4px 4px 0 var(--cyan);">INchase</div>
+      <div class="mt-5 pt-4 text-xs sm:text-sm tracking-[0.22em] uppercase t-ink" style="border-top: 4px solid var(--rule);">Developed by IAB</div>
+    </div>
+  </div>
+
+  <main id="appMain" class="w-full max-w-5xl retro-chassis rounded-2xl p-3.5 sm:p-5 flex flex-col gap-4">
+
+    <!-- HEADER -->
+    <header id="appHeader" class="app-head flex flex-wrap items-center justify-between gap-3 pb-3">
+      <div class="flex items-center gap-3">
+        <img src="favicon.png" alt="INchase logo" class="app-logo w-12 h-12 rounded-lg bg-black" style="image-rendering: pixelated; border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--ink);" />
+        <h1 class="app-title text-2xl sm:text-3xl tracking-wide t-ink" style="text-shadow: 3px 3px 0 var(--cyan);">INchase</h1>
+        <span id="hudWaveOrTime" class="nb-pill c-lime tabular-nums">WAVE 1</span>
+      </div>
+      <div class="flex items-center gap-2.5">
+        <span id="hudShieldCount" class="nb-pill c-pink text-xs">SHIELDS: 2</span>
+        <button id="bestBtn" type="button" class="retro-key c-orange px-3 h-10 rounded-lg text-xs" title="Highest score">BEST</button>
+        <button id="infoBtn" type="button" class="retro-key c-cyan w-10 h-10 rounded-full text-base flex items-center justify-center" aria-label="Game info" title="How to play">i</button>
+      </div>
+    </header>
+
+    <!-- CONTROL STRIP -->
+    <div id="strip" class="flex flex-wrap items-center justify-end gap-2.5">
+      <button id="audioToggleBtn" type="button" class="retro-key px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5" title="Toggle Synth Audio">
+        <span id="audioDot" class="w-3 h-3 rounded-full border-2 border-black bg-emerald-400"></span>
+        <span id="audioLabel" class="desk-only">SYNTH ON</span><span id="audioLabelM" class="mob-only">SND</span>
+      </button>
+      <button id="crtToggleBtn" type="button" class="retro-key px-3 py-1.5 rounded-lg text-xs" title="Toggle Monitor Scanlines">CRT: ON</button>
+      <button id="themeToggleBtn" type="button" class="retro-key px-3 py-1.5 rounded-lg text-xs" title="Switch dark / bright">
+        <span class="desk-only">THEME: </span><span id="themeLabel">DARK</span>
+      </button>
+      <button id="pauseGameBtn" type="button" disabled class="retro-key px-3 py-1.5 rounded-lg text-xs">
+        <span id="pauseBtnText">PAUSE</span>
+      </button>
+      <button id="restartGameBtn" type="button" class="retro-key c-lime px-3 py-1.5 rounded-lg text-xs">NEW RUN</button>
+    </div>
+
+    <div id="stage" class="flex flex-col gap-4">
+
+      <!-- ARENA + POINTS BOARD -->
+      <div id="arenaRow" class="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_250px] gap-4">
+
+        <div id="monitorFrame" class="monitor-bezel scanlines rounded-xl overflow-hidden">
+          <canvas id="gameCanvas"></canvas>
+
+          <div id="canvasOverlay" class="absolute inset-0 z-10 flex items-center justify-center p-4 bg-black/70">
+            <div class="max-w-sm w-full retro-chassis rounded-2xl p-5 text-center">
+              <div class="inline-block nb-pill c-cyan mb-3 text-[10px] tracking-widest">
+                <span id="overlayBadge">READY</span>
+              </div>
+              <h2 id="overlayTitle" class="text-3xl tracking-wide t-ink" style="text-shadow: 3px 3px 0 var(--pink);">INchase</h2>
+              <p id="overlaySubtitle" class="hidden"></p>
+
+              <div id="overlayStats" class="hidden grid grid-cols-2 gap-3 mt-4">
+                <div class="retro-bay c-white rounded-xl p-2.5">
+                  <div class="text-[10px] tracking-widest">YOUR SCORE</div>
+                  <div id="statFinalScore" class="text-2xl tabular-nums mt-1">0</div>
+                </div>
+                <div class="retro-bay c-orange rounded-xl p-2.5">
+                  <div class="text-[10px] tracking-widest">HIGHEST</div>
+                  <div id="statBestScore" class="text-2xl tabular-nums mt-1">0</div>
+                </div>
+              </div>
+              <div id="newBestTag" class="hidden nb-pill c-lime mt-3 inline-block text-xs">NEW HIGH SCORE!</div>
+
+              <div class="mt-5">
+                <button id="overlayPrimaryBtn" type="button" class="retro-key retro-key-active w-full py-3 px-6 rounded-xl text-sm tracking-wide">START</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <aside id="board" class="retro-bay board rounded-xl p-3 flex flex-col gap-2.5 min-h-0">
+          <div class="board-label text-[11px] tracking-widest">POINTS</div>
+          <div class="board-score relative">
+            <div id="hudScore" class="text-5xl tabular-nums leading-none">0</div>
+            <span id="hudScoreDelta" class="nb-delta pos">+100</span>
+          </div>
+          <div class="board-hints flex gap-2 text-[10px]">
+            <span class="nb-pill c-lime" style="padding:1px 6px; box-shadow:2px 2px 0 var(--ink); border-width:2px;">+100 GREEN</span>
+            <span class="nb-pill c-pink" style="padding:1px 6px; box-shadow:2px 2px 0 var(--ink); border-width:2px;">-25 DASH</span>
+          </div>
+          <div class="board-mobile">
+            <span id="hudWaveM" class="nb-pill c-lime tabular-nums">WAVE 1</span>
+            <span id="hudShieldM" class="nb-pill c-pink">SHIELDS: 2</span>
+          </div>
+          <div class="board-hist flex flex-col gap-2.5 flex-1 min-h-0">
+            <div class="hist-title text-[11px] tracking-widest pt-1">MATCH HISTORY</div>
+            <div id="historyList" class="flex-1 min-h-[60px] overflow-y-auto space-y-1.5 pr-1 pb-1"></div>
+          </div>
+        </aside>
+      </div>
+
+      <!-- CONTROL DECK -->
+      <div id="deck" class="retro-bay rounded-xl p-3 sm:px-4 flex flex-wrap items-center justify-between gap-4">
+        <div id="padWrap" class="flex items-center">
+          <div id="arrowPad" class="flex items-center gap-1.5">
+            <button id="padLeftBtn" type="button" class="retro-key w-11 h-10 rounded-lg text-sm flex items-center justify-center" aria-label="Steer Left">←</button>
+            <div class="flex flex-col gap-1.5">
+              <button id="padUpBtn" type="button" class="retro-key w-11 h-9 rounded-lg text-sm flex items-center justify-center" aria-label="Steer Up">↑</button>
+              <button id="padDownBtn" type="button" class="retro-key w-11 h-9 rounded-lg text-sm flex items-center justify-center" aria-label="Steer Down">↓</button>
+            </div>
+            <button id="padRightBtn" type="button" class="retro-key w-11 h-10 rounded-lg text-sm flex items-center justify-center" aria-label="Steer Right">→</button>
+          </div>
+          <div id="joystick" role="application" aria-label="Virtual joystick"><div id="joyKnob"></div></div>
+          <button id="ctrlToggleBtn" type="button" class="mob-only retro-key c-white" title="Switch between joystick and arrow keys"><span id="ctrlLabel">⇄ ARROWS</span></button>
+        </div>
+
+        <div id="ghostBox" class="flex-1 min-w-[160px] max-w-xs">
+          <div class="flex items-center justify-between text-[10px] uppercase tracking-wider">
+            <span>GHOST DRIVE</span>
+            <span id="hudOverdriveText" class="tabular-nums">0%</span>
+          </div>
+          <div class="w-full h-4 rounded-full overflow-hidden mt-1.5" style="background: var(--white); border: 3px solid var(--ink);">
+            <div id="hudOverdriveBar" class="h-full c-orange transition-all duration-100" style="width: 0%;"></div>
+          </div>
+        </div>
+
+        <div id="actionBtns" class="flex items-center gap-3">
+          <button id="touchDashBtn" type="button" class="retro-key retro-key-active px-4 py-2.5 rounded-xl text-xs tracking-wide">DASH</button>
+          <button id="touchSurgeBtn" type="button" disabled class="retro-key c-orange px-4 py-2.5 rounded-xl text-xs tracking-wide"><span class="desk-only">GHOST DRIVE</span><span class="mob-only">GHOST</span></button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="app-foot pt-2 flex items-center justify-center">
+      <span class="text-[11px] tracking-[0.2em] uppercase t-ink">Developed by IAB</span>
+    </footer>
+
+  </main>
+
+
+  <!-- INFO MODAL -->
+  <div id="infoModal" class="hidden fixed inset-0 z-40 flex items-center justify-center p-5 bg-black/70">
+    <div class="max-w-sm w-full retro-chassis rounded-2xl p-6">
+      <h2 class="text-xl mb-4 t-ink" style="text-shadow: 2px 2px 0 var(--cyan);">HOW TO PLAY</h2>
+      <ul class="text-xs leading-relaxed space-y-2.5">
+        <li><span class="nb-pill c-lime" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GREEN</span> Touch it. +100 points.</li>
+        <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">DASH</span> <span class="desk-only">Space or click.</span><span class="mob-only">Tap DASH.</span> -25 points. Breaks nearby red drones.</li>
+        <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">RED</span> Stay away. A hit costs one shield.</li>
+        <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GHOST</span> Fills as you play. <span class="desk-only">Press E or wheel click when full.</span><span class="mob-only">Tap GHOST when full.</span></li>
+        <li><span class="desk-only">Move with mouse, WASD or arrows. P to pause.</span><span class="mob-only">Move with the stick. Use the button under it to switch to arrows.</span></li>
+      </ul>
+      <button id="infoCloseBtn" type="button" class="retro-key retro-key-active w-full mt-5 py-2.5 px-6 rounded-xl text-sm">GOT IT</button>
+    </div>
+  </div>
+
+  <!-- BEST SCORE SCREEN -->
+  <div id="bestModal" class="hidden fixed inset-0 z-40 flex items-center justify-center p-5 bg-black/70">
+    <div class="max-w-sm w-full retro-chassis rounded-2xl p-6 text-center">
+      <h2 class="text-xl mb-3 t-ink" style="text-shadow: 2px 2px 0 var(--orange);">HIGHEST SCORE</h2>
+      <div class="retro-bay c-orange rounded-xl py-4">
+        <div id="bestValue" class="text-6xl tabular-nums leading-none">0</div>
+      </div>
+      <div class="text-[11px] tracking-widest mt-4">MATCHES PLAYED: <span id="matchesPlayed">0</span></div>
+      <div id="runsList" class="space-y-1.5 max-h-40 overflow-y-auto pr-1 text-left mt-3"></div>
+      <button id="bestCloseBtn" type="button" class="retro-key retro-key-active w-full mt-5 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- ==================== GAME ENGINE & APPLICATION SCRIPT ==================== -->
+  <script>
+    (function () {
+      'use strict';
+
+      /* =========================================================================
+       * 0. BLOCK BROWSER RIGHT-CLICK CONTEXT MENU & MIDDLE-CLICK AUTO-SCROLL
+       * ========================================================================= */
+      window.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+      });
+
+      window.addEventListener('auxclick', (e) => {
+        if (e.button === 1 || e.button === 2) {
+          e.preventDefault();
+        }
+      });
+
+      /* =========================================================================
+       * 1. SAFE PERSISTENCE & STATE CONFIGURATION
+       * ========================================================================= */
+      const STORAGE_KEY = 'inchase_iab_v2';
+      const store = { best: 0, total: 0, light: false, ctrl: null, runs: [] };
+
+      function loadStore() {
+        try {
+          const raw = localStorage.getItem(STORAGE_KEY);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed === 'object') {
+              store.best = Number(parsed.best) || 0;
+              store.runs = Array.isArray(parsed.runs) ? parsed.runs.slice(0, 20) : [];
+              store.total = Number(parsed.total) || store.runs.length;
+              store.light = !!parsed.light;
+              store.ctrl = (parsed.ctrl === 'stick' || parsed.ctrl === 'arrows') ? parsed.ctrl : null;
+            }
+          }
+        } catch (err) {
+          // Ignore storage restrictions
+        }
+      }
+
+      function saveStore() {
+        try {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+        } catch (err) {
+          // Ignore storage restrictions
+        }
+      }
+
+      loadStore();
+
+      /* =========================================================================
+       * 2. PROCEDURAL WEB AUDIO SYNTHESIZER (O(1) Zero External Assets)
+       * ========================================================================= */
+      const Synth = {
+        ctx: null,
+        muted: false,
+
+        init() {
+          if (!this.ctx) {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            if (AudioCtx) {
+              this.ctx = new AudioCtx();
+            }
+          }
+          if (this.ctx && this.ctx.state === 'suspended') {
+            this.ctx.resume();
+          }
+        },
+
+        tone(freq, type, duration, gainVal, slideFreq) {
+          if (this.muted) return;
+          this.init();
+          if (!this.ctx) return;
+
+          const now = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+
+          osc.type = type || 'sine';
+          osc.frequency.setValueAtTime(freq, now);
+          if (slideFreq) {
+            osc.frequency.exponentialRampToValueAtTime(slideFreq, now + duration);
+          }
+
+          gain.gain.setValueAtTime(gainVal || 0.12, now);
+          gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+
+          osc.start(now);
+          osc.stop(now + duration);
+        },
+
+        playPrism(combo) {
+          const base = 330 * Math.pow(1.045, Math.min(combo, 20));
+          this.tone(base, 'triangle', 0.16, 0.14, base * 1.5);
+        },
+
+        playDash() {
+          this.tone(180, 'sawtooth', 0.18, 0.11, 520);
+        },
+
+        playShatter(count) {
+          const pitch = 240 + Math.min(count * 45, 300);
+          this.tone(pitch, 'square', 0.22, 0.12, 90);
+        },
+
+        playGraze() {
+          this.tone(880, 'sine', 0.09, 0.07, 1180);
+        },
+
+        playShard() {
+          this.tone(660, 'sine', 0.08, 0.06, 990);
+        },
+
+        playGhostDrive() {
+          this.tone(220, 'triangle', 0.45, 0.16, 880);
+        },
+
+        playShieldHit() {
+          this.tone(160, 'sawtooth', 0.35, 0.16, 55);
+        }
+      };
+
+      /* =========================================================================
+       * 3. O(1) PRE-ALLOCATED TYPED-ARRAY OBJECT POOLS & SPATIAL HASH GRID
+       * ========================================================================= */
+      const GRID_COLS = 12;
+      const GRID_ROWS = 8;
+      const GRID_CELLS = GRID_COLS * GRID_ROWS;
+      const gridHead = new Int32Array(GRID_CELLS);
+
+      const MAX_ENTITIES = 128;
+      // Types: 0 = Red Diamond Drifter, 1 = Red Seeker Arrow, 2 = Red Spiked Pulsar, 3 = Golden Shard
+      const entType = new Uint8Array(MAX_ENTITIES);
+      const entX = new Float32Array(MAX_ENTITIES);
+      const entY = new Float32Array(MAX_ENTITIES);
+      const entVX = new Float32Array(MAX_ENTITIES);
+      const entVY = new Float32Array(MAX_ENTITIES);
+      const entRadius = new Float32Array(MAX_ENTITIES);
+      const entPhase = new Float32Array(MAX_ENTITIES);
+      const entGrazeCooldown = new Float32Array(MAX_ENTITIES);
+      const entNext = new Int32Array(MAX_ENTITIES);
+      let entCount = 0;
+
+      function spawnEntity(type, x, y, vx, vy, radius) {
+        if (entCount >= MAX_ENTITIES) return -1;
+        const id = entCount++;
+        entType[id] = type;
+        entX[id] = x;
+        entY[id] = y;
+        entVX[id] = vx;
+        entVY[id] = vy;
+        entRadius[id] = radius;
+        entPhase[id] = Math.random() * 6.28318;
+        entGrazeCooldown[id] = 0;
+        return id;
+      }
+
+      function removeEntity(id) {
+        const last = --entCount;
+        if (id !== last) {
+          entType[id] = entType[last];
+          entX[id] = entX[last];
+          entY[id] = entY[last];
+          entVX[id] = entVX[last];
+          entVY[id] = entVY[last];
+          entRadius[id] = entRadius[last];
+          entPhase[id] = entPhase[last];
+          entGrazeCooldown[id] = entGrazeCooldown[last];
+        }
+      }
+
+      // Particle Pool: Max 512 (O(1) Swap-and-Pop)
+      const MAX_PARTICLES = 512;
+      const partX = new Float32Array(MAX_PARTICLES);
+      const partY = new Float32Array(MAX_PARTICLES);
+      const partVX = new Float32Array(MAX_PARTICLES);
+      const partVY = new Float32Array(MAX_PARTICLES);
+      const partLife = new Float32Array(MAX_PARTICLES);
+      const partMaxLife = new Float32Array(MAX_PARTICLES);
+      const partSize = new Float32Array(MAX_PARTICLES);
+      const partColorId = new Uint8Array(MAX_PARTICLES); // 0:sky, 1:emerald, 2:rose, 3:amber
+      let partCount = 0;
+
+      function spawnParticle(x, y, vx, vy, life, size, colorId) {
+        if (partCount >= MAX_PARTICLES) return;
+        const i = partCount++;
+        partX[i] = x;
+        partY[i] = y;
+        partVX[i] = vx;
+        partVY[i] = vy;
+        partLife[i] = life;
+        partMaxLife[i] = life;
+        partSize[i] = size;
+        partColorId[i] = colorId;
+      }
+
+      function emitBurst(x, y, count, speed, colorId) {
+        for (let i = 0; i < count; i++) {
+          const angle = (Math.PI * 2 * i) / count + (Math.random() - 0.5) * 0.4;
+          const spd = speed * (0.4 + Math.random() * 0.8);
+          spawnParticle(
+            x,
+            y,
+            Math.cos(angle) * spd,
+            Math.sin(angle) * spd,
+            0.35 + Math.random() * 0.35,
+            2 + Math.random() * 2.5,
+            colorId
+          );
+        }
+      }
+
+      // Shockwave Ring Pool: Max 16
+      const MAX_WAVES = 16;
+      const waveX = new Float32Array(MAX_WAVES);
+      const waveY = new Float32Array(MAX_WAVES);
+      const waveR = new Float32Array(MAX_WAVES);
+      const waveMaxR = new Float32Array(MAX_WAVES);
+      const waveAlpha = new Float32Array(MAX_WAVES);
+      const waveColorId = new Uint8Array(MAX_WAVES);
+      let waveCount = 0;
+
+      function spawnShockwave(x, y, maxR, colorId) {
+        if (waveCount >= MAX_WAVES) return;
+        const i = waveCount++;
+        waveX[i] = x;
+        waveY[i] = y;
+        waveR[i] = 8;
+        waveMaxR[i] = maxR;
+        waveAlpha[i] = 1.0;
+        waveColorId[i] = colorId;
+      }
+
+      // O(1) Bitwise Circular Ring Buffer for Player Motion Trail (Size 32)
+      const TRAIL_SIZE = 32;
+      const TRAIL_MASK = TRAIL_SIZE - 1;
+      const trailX = new Float32Array(TRAIL_SIZE);
+      const trailY = new Float32Array(TRAIL_SIZE);
+      let trailHead = 0;
+
+      // Dash afterimages (stretched ghosts of the core) and speed streaks
+      const MAX_GHOSTS = 24;
+      const GHOST_LIFE = 0.26;
+      const ghostX = new Float32Array(MAX_GHOSTS);
+      const ghostY = new Float32Array(MAX_GHOSTS);
+      const ghostAng = new Float32Array(MAX_GHOSTS);
+      const ghostLife = new Float32Array(MAX_GHOSTS);
+      let ghostCount = 0;
+
+      function spawnGhost(x, y, ang) {
+        if (ghostCount >= MAX_GHOSTS) return;
+        const i = ghostCount++;
+        ghostX[i] = x; ghostY[i] = y; ghostAng[i] = ang; ghostLife[i] = GHOST_LIFE;
+      }
+
+      const MAX_STREAKS = 64;
+      const streakX = new Float32Array(MAX_STREAKS);
+      const streakY = new Float32Array(MAX_STREAKS);
+      const streakAng = new Float32Array(MAX_STREAKS);
+      const streakLen = new Float32Array(MAX_STREAKS);
+      const streakLife = new Float32Array(MAX_STREAKS);
+      const streakMax = new Float32Array(MAX_STREAKS);
+      let streakCount = 0;
+
+      function spawnStreak(x, y, ang, len, life) {
+        if (streakCount >= MAX_STREAKS) return;
+        const i = streakCount++;
+        streakX[i] = x; streakY[i] = y; streakAng[i] = ang;
+        streakLen[i] = len; streakLife[i] = life; streakMax[i] = life;
+      }
+
+      function updateDashFx(dt) {
+        for (let i = ghostCount - 1; i >= 0; i--) {
+          ghostLife[i] -= dt;
+          if (ghostLife[i] <= 0) {
+            const last = --ghostCount;
+            if (i !== last) {
+              ghostX[i] = ghostX[last]; ghostY[i] = ghostY[last];
+              ghostAng[i] = ghostAng[last]; ghostLife[i] = ghostLife[last];
+            }
+          }
+        }
+        for (let i = streakCount - 1; i >= 0; i--) {
+          streakLife[i] -= dt;
+          if (streakLife[i] <= 0) {
+            const last = --streakCount;
+            if (i !== last) {
+              streakX[i] = streakX[last]; streakY[i] = streakY[last];
+              streakAng[i] = streakAng[last]; streakLen[i] = streakLen[last];
+              streakLife[i] = streakLife[last]; streakMax[i] = streakMax[last];
+            }
+          }
+        }
+      }
+
+      /* =========================================================================
+       * 4. GAME STATE & PLAYER CORE
+       * ========================================================================= */
+      const canvas = document.getElementById('gameCanvas');
+      const ctx = canvas.getContext('2d');
+
+      let arenaW = 800;
+      let arenaH = 420;
+      let dpr = 1;
+
+      const Game = {
+        mode: 'arcade', // 'arcade' | 'blitz' | 'zen'
+        state: 'idle',  // 'idle' | 'playing' | 'paused' | 'gameover'
+        score: 0,
+        multiplier: 1,
+        peakMultiplier: 1,
+        comboTimer: 0,
+        comboMaxTime: 4.5,
+        overdriveCharge: 0,
+        overdriveTimer: 0,
+        shields: 2,
+        wave: 1,
+        waveTimer: 0,
+        blitzTimeLeft: 90,
+        shatteredTotal: 0,
+        shakeTime: 0,
+        shakeMag: 0,
+        rafId: null,
+        lastFrameTs: 0
+      };
+
+      const Player = {
+        x: 400,
+        y: 210,
+        vx: 0,
+        vy: 0,
+        radius: 11,
+        speed: 330,
+        dashCooldown: 0,
+        dashMaxCooldown: 1.1,
+        dashActiveTimer: 0,
+        dashT: 0,
+        dashDur: 0.17,
+        dashDirX: 1,
+        dashDirY: 0,
+        dashSpeed: 0,
+        dashAngle: 0,
+        faceAngle: 0,
+        invulnTimer: 0,
+        pointerActive: false,
+        pointerX: 400,
+        pointerY: 210
+      };
+
+      // Active Green Resonance Prism Target
+      const Prism = {
+        x: 200,
+        y: 200,
+        radius: 13,
+        angle: 0,
+        pulse: 0
+      };
+
+      const Keys = { up: false, down: false, left: false, right: false };
+      // Virtual joystick: x/y is a unit direction, mag is 0..1 push strength
+      const Stick = { x: 0, y: 0, mag: 0, id: null };
+
+      /* =========================================================================
+       * 5. DOM REFERENCES & HUD SYNCHRONIZATION
+       * ========================================================================= */
+      const UI = {
+        introSplash: document.getElementById('introSplash'),
+        audioToggleBtn: document.getElementById('audioToggleBtn'),
+        audioDot: document.getElementById('audioDot'),
+        audioLabel: document.getElementById('audioLabel'),
+        crtToggleBtn: document.getElementById('crtToggleBtn'),
+        monitorFrame: document.getElementById('monitorFrame'),
+        themeToggleBtn: document.getElementById('themeToggleBtn'),
+        themeLabel: document.getElementById('themeLabel'),
+        hudOverdriveText: document.getElementById('hudOverdriveText'),
+        hudOverdriveBar: document.getElementById('hudOverdriveBar'),
+        hudWaveOrTime: document.getElementById('hudWaveOrTime'),
+        hudShieldCount: document.getElementById('hudShieldCount'),
+        pauseGameBtn: document.getElementById('pauseGameBtn'),
+        pauseBtnText: document.getElementById('pauseBtnText'),
+        restartGameBtn: document.getElementById('restartGameBtn'),
+
+        canvasOverlay: document.getElementById('canvasOverlay'),
+        overlayBadge: document.getElementById('overlayBadge'),
+        overlayTitle: document.getElementById('overlayTitle'),
+        overlaySubtitle: document.getElementById('overlaySubtitle'),
+        overlayPrimaryBtn: document.getElementById('overlayPrimaryBtn'),
+
+        hudScore: document.getElementById('hudScore'),
+        hudScoreDelta: document.getElementById('hudScoreDelta'),
+        historyList: document.getElementById('historyList'),
+        overlayStats: document.getElementById('overlayStats'),
+        statFinalScore: document.getElementById('statFinalScore'),
+        statBestScore: document.getElementById('statBestScore'),
+        newBestTag: document.getElementById('newBestTag'),
+        bestBtn: document.getElementById('bestBtn'),
+        bestModal: document.getElementById('bestModal'),
+        bestCloseBtn: document.getElementById('bestCloseBtn'),
+        bestValue: document.getElementById('bestValue'),
+        matchesPlayed: document.getElementById('matchesPlayed'),
+        runsList: document.getElementById('runsList'),
+        hudWaveM: document.getElementById('hudWaveM'),
+        hudShieldM: document.getElementById('hudShieldM'),
+        audioLabelM: document.getElementById('audioLabelM'),
+        ctrlToggleBtn: document.getElementById('ctrlToggleBtn'),
+        ctrlLabel: document.getElementById('ctrlLabel'),
+        joystick: document.getElementById('joystick'),
+        joyKnob: document.getElementById('joyKnob'),
+        infoBtn: document.getElementById('infoBtn'),
+        infoModal: document.getElementById('infoModal'),
+        infoCloseBtn: document.getElementById('infoCloseBtn'),
+        padUpBtn: document.getElementById('padUpBtn'),
+        padDownBtn: document.getElementById('padDownBtn'),
+        padLeftBtn: document.getElementById('padLeftBtn'),
+        padRightBtn: document.getElementById('padRightBtn'),
+        touchDashBtn: document.getElementById('touchDashBtn'),
+        touchSurgeBtn: document.getElementById('touchSurgeBtn')
+      };
+
+      // History of final scores, one row per finished match (newest first)
+      function fillHistory(list) {
+        list.textContent = '';
+        if (store.runs.length === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'text-[11px] opacity-60 pt-1';
+          empty.textContent = 'NO MATCHES YET';
+          list.appendChild(empty);
+          return;
+        }
+        store.runs.forEach((r, idx) => {
+          const row = document.createElement('div');
+          row.className = 'hist-row' + (r.score === store.best && store.best > 0 ? ' best' : '');
+          const n = document.createElement('span');
+          n.textContent = '#' + (store.total - idx);
+          const w = document.createElement('span');
+          w.className = 'opacity-70';
+          w.textContent = 'W' + r.wave;
+          const sc = document.createElement('span');
+          sc.className = 'tot tabular-nums';
+          sc.textContent = r.score.toLocaleString();
+          row.appendChild(n);
+          row.appendChild(w);
+          row.appendChild(sc);
+          list.appendChild(row);
+        });
+      }
+
+      function renderMatchHistory() {
+        fillHistory(UI.historyList);
+      }
+
+      function updateScoreUI() {
+        UI.hudScore.textContent = Game.score.toLocaleString();
+      }
+
+      function flashScoreDelta(points) {
+        const el = UI.hudScoreDelta;
+        el.textContent = (points >= 0 ? '+' : '') + points;
+        el.className = 'nb-delta ' + (points >= 0 ? 'pos' : 'neg');
+        void el.offsetWidth; // restart animation
+        el.classList.add('pop');
+      }
+
+      // The only two ways to change the score: green +100, dash -25 (shown live, not logged)
+      function addPoints(delta) {
+        Game.score += delta;
+        updateScoreUI();
+        flashScoreDelta(delta);
+      }
+
+      function renderBest() {
+        UI.bestValue.textContent = store.best.toLocaleString();
+        UI.matchesPlayed.textContent = String(store.total);
+        fillHistory(UI.runsList);
+      }
+
+      function updateHUD() {
+        if (Game.overdriveTimer > 0) {
+          const odPct = (Game.overdriveTimer / 6.0) * 100;
+          UI.hudOverdriveBar.style.width = odPct.toFixed(1) + '%';
+          UI.hudOverdriveText.textContent = Game.overdriveTimer.toFixed(1) + 's';
+          UI.touchSurgeBtn.disabled = true;
+        } else {
+          UI.hudOverdriveBar.style.width = Game.overdriveCharge.toFixed(1) + '%';
+          UI.hudOverdriveText.textContent = Math.floor(Game.overdriveCharge) + '%';
+          UI.touchSurgeBtn.disabled = !(Game.state === 'playing' && Game.overdriveCharge >= 100);
+        }
+
+        UI.hudWaveOrTime.textContent = 'WAVE ' + Game.wave;
+        UI.hudShieldCount.textContent = 'SHIELDS: ' + Game.shields;
+        UI.hudWaveM.textContent = 'WAVE ' + Game.wave;
+        UI.hudShieldM.textContent = 'SHIELDS: ' + Game.shields;
+      }
+
+      /* =========================================================================
+       * 6. ARENA SIZING & SPATIAL HASHING (O(1) Cell Mapping)
+       * ========================================================================= */
+      function resizeCanvas() {
+        const holder = canvas.parentElement;
+        dpr = Math.min(window.devicePixelRatio || 1, 2);
+        arenaW = Math.max(200, Math.floor(holder.clientWidth));
+        arenaH = Math.max(140, Math.floor(holder.clientHeight));
+        canvas.width = arenaW * dpr;
+        canvas.height = arenaH * dpr;
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+        Player.x = Math.max(Player.radius, Math.min(arenaW - Player.radius, Player.x));
+        Player.y = Math.max(Player.radius, Math.min(arenaH - Player.radius, Player.y));
+        Prism.x = Math.max(36, Math.min(arenaW - 36, Prism.x));
+        Prism.y = Math.max(36, Math.min(arenaH - 36, Prism.y));
+        renderArena();
+      }
+
+      function rebuildSpatialGrid() {
+        gridHead.fill(-1);
+        const invW = GRID_COLS / arenaW;
+        const invH = GRID_ROWS / arenaH;
+
+        for (let i = 0; i < entCount; i++) {
+          let cx = (entX[i] * invW) | 0;
+          let cy = (entY[i] * invH) | 0;
+          if (cx < 0) cx = 0;
+          else if (cx >= GRID_COLS) cx = GRID_COLS - 1;
+          if (cy < 0) cy = 0;
+          else if (cy >= GRID_ROWS) cy = GRID_ROWS - 1;
+
+          const cell = cy * GRID_COLS + cx;
+          entNext[i] = gridHead[cell];
+          gridHead[cell] = i;
+        }
+      }
+
+      /* =========================================================================
+       * 7. SPAWNING & GAMEPLAY MECHANICS
+       * ========================================================================= */
+      function relocatePrism() {
+        const margin = 48;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          const nx = margin + Math.random() * (arenaW - margin * 2);
+          const ny = margin + Math.random() * (arenaH - margin * 2);
+          const dx = nx - Player.x;
+          const dy = ny - Player.y;
+          if (dx * dx + dy * dy > 130 * 130) {
+            Prism.x = nx;
+            Prism.y = ny;
+            return;
+          }
+        }
+        Prism.x = arenaW * 0.5;
+        Prism.y = arenaH * 0.5;
+      }
+
+      function spawnWaveHazards(count) {
+        for (let i = 0; i < count; i++) {
+          if (entCount >= MAX_ENTITIES - 8) break;
+          let sx = 0;
+          let sy = 0;
+          const edge = (Math.random() * 4) | 0;
+          if (edge === 0) {
+            sx = Math.random() * arenaW;
+            sy = 20;
+          } else if (edge === 1) {
+            sx = arenaW - 20;
+            sy = Math.random() * arenaH;
+          } else if (edge === 2) {
+            sx = Math.random() * arenaW;
+            sy = arenaH - 20;
+          } else {
+            sx = 20;
+            sy = Math.random() * arenaH;
+          }
+
+          const pdx = sx - Player.x;
+          const pdy = sy - Player.y;
+          if (pdx * pdx + pdy * pdy < 150 * 150) {
+            sx = (sx + arenaW * 0.5) % arenaW;
+            sy = (sy + arenaH * 0.5) % arenaH;
+          }
+
+          const roll = Math.random();
+          const angle = Math.random() * Math.PI * 2;
+          if (roll < 0.6) {
+            // Type 0: Red Diamond Drifter
+            const spd = 95 + Math.min(Game.wave * 8, 90);
+            spawnEntity(0, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 11);
+          } else if (roll < 0.88) {
+            // Type 1: Red Seeker Drone
+            const spd = 85 + Math.min(Game.wave * 7, 80);
+            spawnEntity(1, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 11);
+          } else {
+            // Type 2: Red Spiked Core
+            const spd = 60;
+            spawnEntity(2, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, 13);
+          }
+        }
+      }
+
+      function triggerPhaseDash() {
+        if (Game.state !== 'playing') return;
+        if (Player.dashCooldown > 0 && Game.overdriveTimer <= 0) return;
+
+        // Rule: Tapping Dash deducts 25 points from score
+        addPoints(-25);
+
+        let dx = Player.vx;
+        let dy = Player.vy;
+        if (Player.pointerActive) {
+          const px = Player.pointerX - Player.x;
+          const py = Player.pointerY - Player.y;
+          if (px * px + py * py > 400) { dx = px; dy = py; }
+        }
+        if (dx * dx + dy * dy < 100) {
+          dx = Math.cos(Player.faceAngle);
+          dy = Math.sin(Player.faceAngle);
+        }
+        const len = Math.hypot(dx, dy) || 1;
+        const ndx = dx / len;
+        const ndy = dy / len;
+
+        const dashDist = 150;
+        Player.dashDur = 0.17;
+        Player.dashT = Player.dashDur;
+        Player.dashDirX = ndx;
+        Player.dashDirY = ndy;
+        Player.dashSpeed = dashDist / Player.dashDur;
+        Player.dashAngle = Math.atan2(ndy, ndx);
+        Player.vx = ndx * Player.dashSpeed;
+        Player.vy = ndy * Player.dashSpeed;
+
+        Player.dashCooldown = Game.overdriveTimer > 0 ? 0.18 : Player.dashMaxCooldown;
+        Player.dashActiveTimer = Player.dashDur + 0.08;
+        Player.invulnTimer = Math.max(Player.invulnTimer, 0.35);
+
+        Synth.playDash();
+        spawnShockwave(Player.x, Player.y, 58, 0);
+        emitBurst(Player.x, Player.y, 12, 200, 0);
+        Game.shakeTime = Math.max(Game.shakeTime, 0.09);
+        Game.shakeMag = Math.max(Game.shakeMag, 3);
+
+        updateHUD();
+      }
+
+      // Impact burst at the end of a dash: shatters nearby red drones
+      function dashImpact() {
+        spawnShockwave(Player.x, Player.y, 105, 0);
+        emitBurst(Player.x, Player.y, 16, 210, 0);
+        rebuildSpatialGrid();
+        const blastR = 102;
+        const blastR2 = blastR * blastR;
+        const invW = GRID_COLS / arenaW;
+        const invH = GRID_ROWS / arenaH;
+        const centerCol = Math.max(0, Math.min(GRID_COLS - 1, (Player.x * invW) | 0));
+        const centerRow = Math.max(0, Math.min(GRID_ROWS - 1, (Player.y * invH) | 0));
+
+        let shatteredNow = 0;
+        const toShatter = [];
+
+        for (let r = Math.max(0, centerRow - 2); r <= Math.min(GRID_ROWS - 1, centerRow + 2); r++) {
+          for (let c = Math.max(0, centerCol - 2); c <= Math.min(GRID_COLS - 1, centerCol + 2); c++) {
+            let id = gridHead[r * GRID_COLS + c];
+            while (id !== -1) {
+              if (entType[id] !== 3) {
+                const ex = entX[id] - Player.x;
+                const ey = entY[id] - Player.y;
+                if (ex * ex + ey * ey <= blastR2) {
+                  toShatter.push(id);
+                }
+              }
+              id = entNext[id];
+            }
+          }
+        }
+
+        for (let k = 0; k < toShatter.length; k++) {
+          const idx = toShatter[k];
+          const sx = entX[idx];
+          const sy = entY[idx];
+          entType[idx] = 3;
+          entRadius[idx] = 6.5;
+          entVX[idx] = (sx - Player.x) * 2.2;
+          entVY[idx] = (sy - Player.y) * 2.2;
+          emitBurst(sx, sy, 10, 160, 3);
+          shatteredNow++;
+        }
+
+        if (shatteredNow > 0) {
+          Game.shatteredTotal += shatteredNow;
+          Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 1.4);
+          Game.overdriveCharge = Math.min(100, Game.overdriveCharge + shatteredNow * 14);
+          Game.shakeTime = 0.16;
+          Game.shakeMag = Math.min(9, 3 + shatteredNow * 2);
+          Synth.playShatter(shatteredNow);
+
+          if (shatteredNow >= 2) {
+            Player.dashCooldown *= 0.45;
+          }
+        }
+
+        updateHUD();
+      }
+
+      function triggerGhostDrive() {
+        if (Game.state !== 'playing') return;
+        if (Game.overdriveCharge < 100 || Game.overdriveTimer > 0) return;
+
+        Game.overdriveCharge = 0;
+        Game.overdriveTimer = 6.0;
+        Player.invulnTimer = Math.max(Player.invulnTimer, 1.0);
+        Player.dashCooldown = 0;
+        Synth.playGhostDrive();
+        spawnShockwave(Player.x, Player.y, 220, 3);
+        emitBurst(Player.x, Player.y, 28, 280, 3);
+        updateHUD();
+      }
+
+      /* =========================================================================
+       * 8. MAIN SIMULATION STEP
+       * ========================================================================= */
+      function stepSimulation(dt) {
+        if (Game.mode === 'blitz') {
+          Game.blitzTimeLeft -= dt;
+          if (Game.blitzTimeLeft <= 0) {
+            Game.blitzTimeLeft = 0;
+            endGame('TIME BLITZ COMPLETE');
+            return;
+          }
+        }
+
+        Game.waveTimer += dt;
+        if (Game.waveTimer >= 9.0) {
+          Game.waveTimer = 0;
+          Game.wave++;
+          spawnWaveHazards(2 + Math.min(4, (Game.wave >> 1)));
+        }
+
+        let activeHazards = 0;
+        for (let i = 0; i < entCount; i++) {
+          if (entType[i] !== 3) activeHazards++;
+        }
+        const targetMin = 4 + Math.min(14, Game.wave * 2);
+        if (activeHazards < targetMin) {
+          spawnWaveHazards(2);
+        }
+
+        if (Game.multiplier > 1 || Game.comboTimer > 0) {
+          const decayRate = Game.overdriveTimer > 0 ? 0.35 : 1.0;
+          Game.comboTimer -= dt * decayRate;
+          if (Game.comboTimer <= 0) {
+            Game.comboTimer = 0;
+            Game.multiplier = 1;
+          }
+        }
+
+        if (Game.overdriveTimer > 0) {
+          Game.overdriveTimer = Math.max(0, Game.overdriveTimer - dt);
+        }
+        if (Game.shakeTime > 0) {
+          Game.shakeTime = Math.max(0, Game.shakeTime - dt);
+        }
+        if (Player.dashCooldown > 0) {
+          Player.dashCooldown = Math.max(0, Player.dashCooldown - dt);
+        }
+        if (Player.dashActiveTimer > 0) {
+          Player.dashActiveTimer = Math.max(0, Player.dashActiveTimer - dt);
+        }
+        if (Player.invulnTimer > 0) {
+          Player.invulnTimer = Math.max(0, Player.invulnTimer - dt);
+        }
+
+        // Player Steering
+        let ax = 0;
+        let ay = 0;
+        if (Keys.left) ax -= 1;
+        if (Keys.right) ax += 1;
+        if (Keys.up) ay -= 1;
+        if (Keys.down) ay += 1;
+        let analog = 1;
+        if (Stick.mag > 0) {
+          ax = Stick.x;
+          ay = Stick.y;
+          analog = Stick.mag;
+        }
+
+        const targetSpeed = Game.overdriveTimer > 0 ? Player.speed * 1.22 : Player.speed;
+
+        if (ax !== 0 || ay !== 0) {
+          Player.pointerActive = false;
+          const ilen = 1 / Math.hypot(ax, ay);
+          const tvx = ax * ilen * targetSpeed * analog;
+          const tvy = ay * ilen * targetSpeed * analog;
+          Player.vx += (tvx - Player.vx) * Math.min(1, dt * 14);
+          Player.vy += (tvy - Player.vy) * Math.min(1, dt * 14);
+        } else if (Player.pointerActive) {
+          const dx = Player.pointerX - Player.x;
+          const dy = Player.pointerY - Player.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist > 4) {
+            const spd = Math.min(targetSpeed, dist * 7.5);
+            const tvx = (dx / dist) * spd;
+            const tvy = (dy / dist) * spd;
+            Player.vx += (tvx - Player.vx) * Math.min(1, dt * 16);
+            Player.vy += (tvy - Player.vy) * Math.min(1, dt * 16);
+          } else {
+            Player.vx *= 0.82;
+            Player.vy *= 0.82;
+          }
+        } else {
+          Player.vx *= 0.88;
+          Player.vy *= 0.88;
+        }
+
+        if (Player.dashT > 0) {
+          // Ease-out dash: starts fast, settles toward the end
+          const prog = Player.dashT / Player.dashDur;
+          const f = 0.55 + 0.9 * prog;
+          Player.vx = Player.dashDirX * Player.dashSpeed * f;
+          Player.vy = Player.dashDirY * Player.dashSpeed * f;
+        }
+
+        Player.x += Player.vx * dt;
+        Player.y += Player.vy * dt;
+
+        if (Player.x < Player.radius) {
+          Player.x = Player.radius;
+          Player.vx = Math.abs(Player.vx) * 0.5;
+        } else if (Player.x > arenaW - Player.radius) {
+          Player.x = arenaW - Player.radius;
+          Player.vx = -Math.abs(Player.vx) * 0.5;
+        }
+        if (Player.y < Player.radius) {
+          Player.y = Player.radius;
+          Player.vy = Math.abs(Player.vy) * 0.5;
+        } else if (Player.y > arenaH - Player.radius) {
+          Player.y = arenaH - Player.radius;
+          Player.vy = -Math.abs(Player.vy) * 0.5;
+        }
+
+        trailHead = (trailHead + 1) & TRAIL_MASK;
+        trailX[trailHead] = Player.x;
+        trailY[trailHead] = Player.y;
+
+        if (Player.dashT > 0) {
+          const hitWall =
+            Player.x <= Player.radius + 0.01 || Player.x >= arenaW - Player.radius - 0.01 ||
+            Player.y <= Player.radius + 0.01 || Player.y >= arenaH - Player.radius - 0.01;
+          // Afterimage + speed streaks along the dash path
+          spawnGhost(Player.x, Player.y, Player.dashAngle);
+          const nx = -Player.dashDirY;
+          const ny = Player.dashDirX;
+          for (let k = 0; k < 2; k++) {
+            const off = (Math.random() - 0.5) * Player.radius * 3.4;
+            spawnStreak(
+              Player.x + nx * off - Player.dashDirX * 6,
+              Player.y + ny * off - Player.dashDirY * 6,
+              Player.dashAngle,
+              28 + Math.random() * 46,
+              0.16 + Math.random() * 0.14
+            );
+          }
+          Player.dashT -= dt;
+          if (hitWall) Player.dashT = 0;
+          if (Player.dashT <= 0) {
+            Player.dashT = 0;
+            Player.vx = Player.dashDirX * Player.speed * 1.1;
+            Player.vy = Player.dashDirY * Player.speed * 1.1;
+            dashImpact();
+          }
+        } else if (Player.vx * Player.vx + Player.vy * Player.vy > 400) {
+          Player.faceAngle = Math.atan2(Player.vy, Player.vx);
+        }
+        updateDashFx(dt);
+
+        // Check Green Prism Pickup (+100 × Multiplier)
+        Prism.angle += dt * 2.4;
+        Prism.pulse += dt * 5.0;
+        const pdx = Prism.x - Player.x;
+        const pdy = Prism.y - Player.y;
+        const pickupDist = Player.radius + Prism.radius + 4;
+        if (pdx * pdx + pdy * pdy <= pickupDist * pickupDist) {
+          Game.multiplier = Math.min(64, Game.multiplier + 1);
+          if (Game.multiplier > Game.peakMultiplier) {
+            Game.peakMultiplier = Game.multiplier;
+          }
+          Game.comboTimer = Game.comboMaxTime;
+          addPoints(100);
+          Game.overdriveCharge = Math.min(100, Game.overdriveCharge + 15);
+          Player.dashCooldown *= 0.55;
+
+          Synth.playPrism(Game.multiplier);
+          spawnShockwave(Prism.x, Prism.y, 70, 1);
+          emitBurst(Prism.x, Prism.y, 16, 180, 1);
+          relocatePrism();
+        }
+
+        // Update Entities
+        const hazardTimeScale = Game.overdriveTimer > 0 ? 0.42 : 1.0;
+        const magnetRadius = Game.overdriveTimer > 0 ? 280 : 140;
+        const magnetR2 = magnetRadius * magnetRadius;
+
+        for (let i = entCount - 1; i >= 0; i--) {
+          const type = entType[i];
+          entPhase[i] += dt * 4.0;
+          if (entGrazeCooldown[i] > 0) {
+            entGrazeCooldown[i] = Math.max(0, entGrazeCooldown[i] - dt);
+          }
+
+          if (type === 1) {
+            // Red Seeker Drone steers gently toward Player
+            const sx = Player.x - entX[i];
+            const sy = Player.y - entY[i];
+            const slen = Math.hypot(sx, sy) || 1;
+            const desiredSpd = 110 + Math.min(Game.wave * 6, 75);
+            entVX[i] += ((sx / slen) * desiredSpd - entVX[i]) * dt * 1.8 * hazardTimeScale;
+            entVY[i] += ((sy / slen) * desiredSpd - entVY[i]) * dt * 1.8 * hazardTimeScale;
+          } else if (type === 3) {
+            // Golden Shard: magnetically pulled toward Player
+            const gx = Player.x - entX[i];
+            const gy = Player.y - entY[i];
+            const gd2 = gx * gx + gy * gy;
+            if (gd2 < magnetR2) {
+              const gd = Math.sqrt(gd2) || 1;
+              entVX[i] += (gx / gd) * 980 * dt;
+              entVY[i] += (gy / gd) * 980 * dt;
+            } else {
+              entVX[i] *= 0.95;
+              entVY[i] *= 0.95;
+            }
+          }
+
+          const stepScale = type === 3 ? 1.0 : hazardTimeScale;
+          entX[i] += entVX[i] * dt * stepScale;
+          entY[i] += entVY[i] * dt * stepScale;
+
+          const r = entRadius[i];
+          if (entX[i] < r) {
+            entX[i] = r;
+            entVX[i] = Math.abs(entVX[i]);
+          } else if (entX[i] > arenaW - r) {
+            entX[i] = arenaW - r;
+            entVX[i] = -Math.abs(entVX[i]);
+          }
+          if (entY[i] < r) {
+            entY[i] = r;
+            entVY[i] = Math.abs(entVY[i]);
+          } else if (entY[i] > arenaH - r) {
+            entY[i] = arenaH - r;
+            entVY[i] = -Math.abs(entVY[i]);
+          }
+        }
+
+        // Spatial Grid Collision Check
+        rebuildSpatialGrid();
+        const invW = GRID_COLS / arenaW;
+        const invH = GRID_ROWS / arenaH;
+        const pCol = Math.max(0, Math.min(GRID_COLS - 1, (Player.x * invW) | 0));
+        const pRow = Math.max(0, Math.min(GRID_ROWS - 1, (Player.y * invH) | 0));
+
+        const shardsToCollect = [];
+        let hazardHitId = -1;
+
+        for (let r = Math.max(0, pRow - 1); r <= Math.min(GRID_ROWS - 1, pRow + 1); r++) {
+          for (let c = Math.max(0, pCol - 1); c <= Math.min(GRID_COLS - 1, pCol + 1); c++) {
+            let id = gridHead[r * GRID_COLS + c];
+            while (id !== -1) {
+              const dx = entX[id] - Player.x;
+              const dy = entY[id] - Player.y;
+              const d2 = dx * dx + dy * dy;
+              const hitR = Player.radius + entRadius[id];
+
+              if (entType[id] === 3) {
+                if (d2 <= (hitR + 6) * (hitR + 6)) {
+                  shardsToCollect.push(id);
+                }
+              } else {
+                if (d2 <= (hitR - 2) * (hitR - 2)) {
+                  hazardHitId = id;
+                } else {
+                  const grazeR = hitR + 20;
+                  if (d2 <= grazeR * grazeR && entGrazeCooldown[id] <= 0) {
+                    entGrazeCooldown[id] = 1.1;
+                    Game.overdriveCharge = Math.min(100, Game.overdriveCharge + 6);
+                    Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 0.45);
+                    Synth.playGraze();
+                    spawnParticle(entX[id], entY[id], -dx * 2, -dy * 2, 0.3, 2.5, 0);
+                  }
+                }
+              }
+              id = entNext[id];
+            }
+          }
+        }
+
+        if (shardsToCollect.length > 0) {
+          shardsToCollect.sort((a, b) => b - a);
+          for (let k = 0; k < shardsToCollect.length; k++) {
+            const id = shardsToCollect[k];
+            if (id < entCount && entType[id] === 3) {
+              Game.comboTimer = Math.min(Game.comboMaxTime, Game.comboTimer + 0.35);
+              Synth.playShard();
+              emitBurst(entX[id], entY[id], 6, 110, 3);
+              removeEntity(id);
+            }
+          }
+        }
+
+        if (hazardHitId !== -1) {
+          if (Player.dashActiveTimer > 0 || Game.overdriveTimer > 0) {
+            const sx = entX[hazardHitId];
+            const sy = entY[hazardHitId];
+            entType[hazardHitId] = 3;
+            entRadius[hazardHitId] = 6.5;
+            Game.shatteredTotal++;
+            Synth.playShatter(1);
+            emitBurst(sx, sy, 12, 180, 3);
+          } else if (Player.invulnTimer <= 0) {
+            Synth.playShieldHit();
+            Game.shakeTime = 0.28;
+            Game.shakeMag = 10;
+            Player.invulnTimer = 1.4;
+            spawnShockwave(Player.x, Player.y, 130, 2);
+            emitBurst(Player.x, Player.y, 24, 240, 2);
+            removeEntity(hazardHitId);
+
+            if (Game.mode === 'zen') {
+              Game.multiplier = 1;
+              Game.comboTimer = 0;
+            } else if (Game.shields > 0) {
+              Game.shields--;
+              Game.multiplier = Math.max(1, Game.multiplier >> 1);
+            } else {
+              endGame('CORE DESTABILIZED');
+              return;
+            }
+          }
+        }
+
+        for (let i = partCount - 1; i >= 0; i--) {
+          partLife[i] -= dt;
+          if (partLife[i] <= 0) {
+            const last = --partCount;
+            if (i !== last) {
+              partX[i] = partX[last];
+              partY[i] = partY[last];
+              partVX[i] = partVX[last];
+              partVY[i] = partVY[last];
+              partLife[i] = partLife[last];
+              partMaxLife[i] = partMaxLife[last];
+              partSize[i] = partSize[last];
+              partColorId[i] = partColorId[last];
+            }
+          } else {
+            partX[i] += partVX[i] * dt;
+            partY[i] += partVY[i] * dt;
+            partVX[i] *= 0.94;
+            partVY[i] *= 0.94;
+          }
+        }
+
+        for (let i = waveCount - 1; i >= 0; i--) {
+          waveR[i] += (waveMaxR[i] - waveR[i]) * Math.min(1, dt * 11);
+          waveAlpha[i] -= dt * 2.6;
+          if (waveAlpha[i] <= 0) {
+            const last = --waveCount;
+            if (i !== last) {
+              waveX[i] = waveX[last];
+              waveY[i] = waveY[last];
+              waveR[i] = waveR[last];
+              waveMaxR[i] = waveMaxR[last];
+              waveAlpha[i] = waveAlpha[last];
+              waveColorId[i] = waveColorId[last];
+            }
+          }
+        }
+
+        updateHUD();
+      }
+
+      /* =========================================================================
+       * 9. VECTOR ARENA RENDERER
+       *    (With Reduced Subtle Hover Grid Rectangle Glow & Unified Red Enemies)
+       * ========================================================================= */
+      // 0: Cyan Core, 1: Emerald Prism, 2: Crimson Hazard, 3: Golden Shard
+      const COLORS = ['#38BDF8', '#10B981', '#F43F5E', '#F59E0B'];
+
+      function renderArena() {
+        ctx.save();
+        ctx.fillStyle = '#0B0E14';
+        ctx.fillRect(0, 0, arenaW, arenaH);
+
+        if (Game.shakeTime > 0) {
+          const sx = (Math.random() - 0.5) * Game.shakeMag;
+          const sy = (Math.random() - 0.5) * Game.shakeMag;
+          ctx.translate(sx, sy);
+        }
+
+        // 1. Subtle Vector Coordinate Grid
+        const cellW = arenaW / GRID_COLS;
+        const cellH = arenaH / GRID_ROWS;
+        ctx.strokeStyle = 'rgba(248, 250, 252, 0.032)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let c = 1; c < GRID_COLS; c++) {
+          const x = Math.floor(c * cellW) + 0.5;
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, arenaH);
+        }
+        for (let r = 1; r < GRID_ROWS; r++) {
+          const y = Math.floor(r * cellH) + 0.5;
+          ctx.moveTo(0, y);
+          ctx.lineTo(arenaW, y);
+        }
+        ctx.stroke();
+
+        // Restored Grid Rectangle Hover Glow under Player Orbit (with reduced subtle intensity)
+        const pCol = Math.max(0, Math.min(GRID_COLS - 1, (Player.x / cellW) | 0));
+        const pRow = Math.max(0, Math.min(GRID_ROWS - 1, (Player.y / cellH) | 0));
+        ctx.fillStyle = Game.overdriveTimer > 0
+          ? 'rgba(245, 158, 11, 0.022)'
+          : 'rgba(56, 189, 248, 0.018)';
+        ctx.fillRect(pCol * cellW, pRow * cellH, cellW, cellH);
+        ctx.strokeStyle = Game.overdriveTimer > 0
+          ? 'rgba(245, 158, 11, 0.065)'
+          : 'rgba(56, 189, 248, 0.055)';
+        ctx.strokeRect(pCol * cellW + 0.5, pRow * cellH + 0.5, cellW - 1, cellH - 1);
+
+        // 2. Shockwaves
+        for (let i = 0; i < waveCount; i++) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(waveX[i], waveY[i], waveR[i], 0, Math.PI * 2);
+          ctx.strokeStyle = COLORS[waveColorId[i]];
+          ctx.globalAlpha = Math.max(0, waveAlpha[i]);
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+          ctx.restore();
+        }
+
+        // 3. Green Resonance Prism (Emerald Hexagon + Orbital Ring)
+        ctx.save();
+        ctx.translate(Prism.x, Prism.y);
+        const pulseScale = 1 + Math.sin(Prism.pulse) * 0.1;
+        ctx.strokeStyle = COLORS[1];
+        ctx.globalAlpha = 0.35;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, Prism.radius * 1.75 * pulseScale, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.rotate(Prism.angle);
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = COLORS[1];
+        ctx.beginPath();
+        for (let s = 0; s < 6; s++) {
+          const a = (s * Math.PI) / 3;
+          const px = Math.cos(a) * Prism.radius;
+          const py = Math.sin(a) * Prism.radius;
+          if (s === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        // 4. Tail: tapered glowing ribbon, dash afterimages and speed streaks
+        ctx.save();
+        const tailCol = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
+        const dashing = Player.dashT > 0;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        // Speed streaks (thin lines that stay behind the dash path)
+        ctx.strokeStyle = '#E0F2FE';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < streakCount; i++) {
+          const t = streakLife[i] / streakMax[i];
+          const len = streakLen[i] * (0.4 + 0.6 * t);
+          ctx.globalAlpha = t * 0.8;
+          ctx.beginPath();
+          ctx.moveTo(streakX[i], streakY[i]);
+          ctx.lineTo(streakX[i] - Math.cos(streakAng[i]) * len, streakY[i] - Math.sin(streakAng[i]) * len);
+          ctx.stroke();
+        }
+
+        // Afterimages: stretched ghosts of the core
+        ctx.fillStyle = tailCol;
+        for (let i = 0; i < ghostCount; i++) {
+          const t = ghostLife[i] / GHOST_LIFE;
+          ctx.save();
+          ctx.translate(ghostX[i], ghostY[i]);
+          ctx.rotate(ghostAng[i]);
+          ctx.globalAlpha = t * 0.45;
+          ctx.beginPath();
+          ctx.ellipse(0, 0, Player.radius * (1.0 + 1.5 * t), Player.radius * (0.5 + 0.45 * t), 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // Tapered ribbon, newest to oldest
+        const segs = dashing ? 28 : 18;
+        if (dashing) {
+          ctx.shadowColor = tailCol;
+          ctx.shadowBlur = 14;
+        }
+        for (let k = 1; k < segs; k++) {
+          const i0 = (trailHead - k + 1 + TRAIL_SIZE) & TRAIL_MASK;
+          const i1 = (trailHead - k + TRAIL_SIZE) & TRAIL_MASK;
+          const t = 1 - k / segs;
+          ctx.globalAlpha = t * (dashing ? 0.85 : 0.45);
+          ctx.strokeStyle = dashing && k < 6 ? '#E0F2FE' : tailCol;
+          ctx.lineWidth = Math.max(1, Player.radius * 2 * t * (dashing ? 1.0 : 0.7));
+          ctx.beginPath();
+          ctx.moveTo(trailX[i0], trailY[i0]);
+          ctx.lineTo(trailX[i1], trailY[i1]);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        // 5. Entities: Unified Crimson-Red Enemy Drones (Types 0, 1, 2) & Golden Shards (Type 3)
+        for (let i = 0; i < entCount; i++) {
+          const type = entType[i];
+          const x = entX[i];
+          const y = entY[i];
+          const r = entRadius[i];
+
+          ctx.save();
+          ctx.translate(x, y);
+
+          if (type === 3) {
+            // Golden Score Shard
+            ctx.rotate(entPhase[i]);
+            ctx.fillStyle = '#FBBF24';
+            ctx.beginPath();
+            ctx.rect(-r * 0.7, -r * 0.7, r * 1.4, r * 1.4);
+            ctx.fill();
+          } else {
+            ctx.strokeStyle = COLORS[2];
+            ctx.globalAlpha = 0.18;
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(0, 0, r + 16, 0, Math.PI * 2);
+            ctx.stroke();
+
+            ctx.globalAlpha = 1;
+            ctx.fillStyle = COLORS[2];
+            ctx.strokeStyle = '#FDA4AF';
+            ctx.lineWidth = 1.2;
+
+            if (type === 0) {
+              ctx.rotate(entPhase[i] * 0.6);
+              ctx.beginPath();
+              ctx.moveTo(0, -r);
+              ctx.lineTo(r, 0);
+              ctx.lineTo(0, r);
+              ctx.lineTo(-r, 0);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+            } else if (type === 1) {
+              const heading = Math.atan2(entVY[i], entVX[i]);
+              ctx.rotate(heading);
+              ctx.beginPath();
+              ctx.moveTo(r * 1.3, 0);
+              ctx.lineTo(-r, r * 0.85);
+              ctx.lineTo(-r * 0.45, 0);
+              ctx.lineTo(-r, -r * 0.85);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+            } else {
+              ctx.rotate(-entPhase[i] * 0.4);
+              ctx.beginPath();
+              for (let s = 0; s < 12; s++) {
+                const rad = (s & 1) === 0 ? r * 1.15 : r * 0.6;
+                const ang = (s * Math.PI) / 6;
+                const px = Math.cos(ang) * rad;
+                const py = Math.sin(ang) * rad;
+                if (s === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+              }
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+            }
+          }
+
+          ctx.restore();
+        }
+
+        // 6. Particles
+        for (let i = 0; i < partCount; i++) {
+          ctx.save();
+          ctx.fillStyle = COLORS[partColorId[i]];
+          ctx.globalAlpha = Math.max(0, partLife[i] / partMaxLife[i]);
+          ctx.beginPath();
+          ctx.arc(partX[i], partY[i], partSize[i], 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        // 7. Player Vector Core
+        ctx.save();
+        ctx.translate(Player.x, Player.y);
+
+        if (Player.invulnTimer > 0 || Game.overdriveTimer > 0) {
+          ctx.strokeStyle = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
+          ctx.lineWidth = 2;
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath();
+          ctx.arc(0, 0, Player.radius + 9, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+
+        if (Player.dashT > 0) {
+          ctx.rotate(Player.dashAngle);
+          ctx.scale(1.7, 0.75);
+          ctx.shadowColor = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
+          ctx.shadowBlur = 18;
+        }
+        ctx.fillStyle = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
+        ctx.beginPath();
+        ctx.arc(0, 0, Player.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#FFFFFF';
+        ctx.beginPath();
+        ctx.arc(0, 0, Player.radius * 0.42, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.restore();
+      }
+
+      /* =========================================================================
+       * 10. GAME LOOP & SESSION LIFECYCLE
+       * ========================================================================= */
+      function loop(ts) {
+        if (Game.state !== 'playing') return;
+        if (!Game.lastFrameTs) Game.lastFrameTs = ts;
+        const dt = Math.min(0.05, (ts - Game.lastFrameTs) / 1000);
+        Game.lastFrameTs = ts;
+
+        stepSimulation(dt);
+        renderArena();
+
+        if (Game.state === 'playing') {
+          Game.rafId = requestAnimationFrame(loop);
+        }
+      }
+
+      function startNewRun() {
+        if (Game.rafId) {
+          cancelAnimationFrame(Game.rafId);
+          Game.rafId = null;
+        }
+
+        Synth.init();
+        entCount = 0;
+        partCount = 0;
+        waveCount = 0;
+
+        Game.state = 'playing';
+        Game.score = 0;
+        updateScoreUI();
+        UI.overlayStats.classList.add('hidden');
+        UI.newBestTag.classList.add('hidden');
+        Game.multiplier = 1;
+        Game.peakMultiplier = 1;
+        Game.comboTimer = 0;
+        Game.overdriveCharge = 0;
+        Game.overdriveTimer = 0;
+        Game.shields = 2;
+        Game.wave = 1;
+        Game.waveTimer = 0;
+        Game.blitzTimeLeft = 90;
+        Game.shatteredTotal = 0;
+        Game.shakeTime = 0;
+        Game.lastFrameTs = 0;
+
+        Player.x = arenaW * 0.5;
+        Player.y = arenaH * 0.5;
+        Player.vx = 0;
+        Player.vy = 0;
+        Player.dashCooldown = 0;
+        Player.dashActiveTimer = 0;
+        Player.dashT = 0;
+        ghostCount = 0;
+        streakCount = 0;
+        Player.invulnTimer = 1.0;
+
+        for (let i = 0; i < TRAIL_SIZE; i++) {
+          trailX[i] = Player.x;
+          trailY[i] = Player.y;
+        }
+
+        relocatePrism();
+        spawnWaveHazards(5);
+
+        UI.canvasOverlay.classList.add('hidden');
+        UI.pauseGameBtn.disabled = false;
+        UI.pauseBtnText.textContent = 'PAUSE';
+
+        updateHUD();
+        renderArena();
+        Game.rafId = requestAnimationFrame(loop);
+      }
+
+      function togglePause() {
+        if (Game.state === 'playing') {
+          Game.state = 'paused';
+          if (Game.rafId) {
+            cancelAnimationFrame(Game.rafId);
+            Game.rafId = null;
+          }
+          UI.pauseBtnText.textContent = 'RESUME';
+          UI.overlayStats.classList.add('hidden');
+          UI.newBestTag.classList.add('hidden');
+          UI.overlayBadge.textContent = 'PAUSED';
+          UI.overlayTitle.textContent = 'PAUSED';
+          UI.overlayPrimaryBtn.textContent = 'RESUME';
+          UI.canvasOverlay.classList.remove('hidden');
+        } else if (Game.state === 'paused') {
+          Game.state = 'playing';
+          Game.lastFrameTs = 0;
+          UI.pauseBtnText.textContent = 'PAUSE';
+          UI.canvasOverlay.classList.add('hidden');
+          Game.rafId = requestAnimationFrame(loop);
+        }
+      }
+
+      function endGame(reasonTitle) {
+        Game.state = 'gameover';
+        if (Game.rafId) {
+          cancelAnimationFrame(Game.rafId);
+          Game.rafId = null;
+        }
+        UI.pauseGameBtn.disabled = true;
+
+        const isNewBest = Game.score > store.best;
+        if (isNewBest) store.best = Game.score;
+        store.runs.unshift({ score: Game.score, wave: Game.wave });
+        store.runs = store.runs.slice(0, 20);
+        store.total++;
+        saveStore();
+        renderMatchHistory();
+        UI.statFinalScore.textContent = Game.score.toLocaleString();
+        UI.statBestScore.textContent = store.best.toLocaleString();
+        UI.overlayStats.classList.remove('hidden');
+        UI.newBestTag.classList.toggle('hidden', !isNewBest);
+        UI.overlayBadge.textContent = 'GAME OVER';
+        UI.overlayTitle.textContent = 'WAVE ' + Game.wave + ' REACHED';
+        UI.overlayPrimaryBtn.textContent = 'PLAY AGAIN';
+        UI.canvasOverlay.classList.remove('hidden');
+        updateHUD();
+        renderArena();
+      }
+
+      /* =========================================================================
+       * 11. EVENT LISTENERS
+       * ========================================================================= */
+      UI.audioToggleBtn.addEventListener('click', () => {
+        Synth.muted = !Synth.muted;
+        if (Synth.muted) {
+          UI.audioDot.className = 'w-3 h-3 rounded-full border-2 border-black bg-rose-500';
+          UI.audioLabel.textContent = 'MUTED';
+          UI.audioLabelM.textContent = 'MUTE';
+        } else {
+          UI.audioDot.className = 'w-3 h-3 rounded-full border-2 border-black bg-emerald-400';
+          UI.audioLabel.textContent = 'SYNTH ON';
+          UI.audioLabelM.textContent = 'SND';
+          Synth.playGraze();
+        }
+      });
+
+      UI.crtToggleBtn.addEventListener('click', () => {
+        const hasScanlines = UI.monitorFrame.classList.toggle('scanlines');
+        UI.crtToggleBtn.textContent = hasScanlines ? 'CRT: ON' : 'CRT: OFF';
+      });
+
+      function applyTheme() {
+        document.documentElement.classList.toggle('light-mode', store.light);
+        UI.themeLabel.textContent = store.light ? 'BRIGHT' : 'DARK';
+      }
+
+      UI.themeToggleBtn.addEventListener('click', () => {
+        store.light = !store.light;
+        applyTheme();
+        saveStore();
+      });
+
+      UI.infoBtn.addEventListener('click', () => UI.infoModal.classList.remove('hidden'));
+      UI.bestBtn.addEventListener('click', () => {
+        renderBest();
+        UI.bestModal.classList.remove('hidden');
+      });
+      UI.bestCloseBtn.addEventListener('click', () => UI.bestModal.classList.add('hidden'));
+      UI.bestModal.addEventListener('click', (e) => {
+        if (e.target === UI.bestModal) UI.bestModal.classList.add('hidden');
+      });
+      UI.infoCloseBtn.addEventListener('click', () => UI.infoModal.classList.add('hidden'));
+      UI.infoModal.addEventListener('click', (e) => {
+        if (e.target === UI.infoModal) UI.infoModal.classList.add('hidden');
+      });
+      UI.pauseGameBtn.addEventListener('click', togglePause);
+      UI.restartGameBtn.addEventListener('click', startNewRun);
+
+      UI.overlayPrimaryBtn.addEventListener('click', () => {
+        if (Game.state === 'paused') togglePause();
+        else startNewRun();
+      });
+
+      // Pointer & Mouse Button Handling on Canvas
+      function updatePointerCoords(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        Player.pointerX = Math.max(0, Math.min(arenaW, clientX - rect.left));
+        Player.pointerY = Math.max(0, Math.min(arenaH, clientY - rect.top));
+        Player.pointerActive = true;
+      }
+
+      canvas.addEventListener('pointermove', (e) => {
+        if (e.pointerType === 'touch') return;
+        if (Game.state === 'playing') {
+          updatePointerCoords(e.clientX, e.clientY);
+        }
+      });
+
+      canvas.addEventListener('pointerdown', (e) => {
+        if (e.pointerType === 'touch') return;
+        if (e.button === 2) {
+          // Block right click
+          e.preventDefault();
+          return;
+        }
+        if (e.button === 1) {
+          // Middle Mouse Button (Scroll Wheel Click) triggers Ghost Drive!
+          e.preventDefault();
+          if (Game.state === 'playing') {
+            triggerGhostDrive();
+          }
+          return;
+        }
+        if (Game.state !== 'playing') return;
+        updatePointerCoords(e.clientX, e.clientY);
+        triggerPhaseDash();
+      });
+
+      // Global Middle Mouse Button listener so pressing Scroll Wheel anywhere activates Ghost Drive
+      window.addEventListener('mousedown', (e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          if (Game.state === 'playing') {
+            triggerGhostDrive();
+          }
+        }
+      });
+
+      // Keyboard Controls
+      window.addEventListener('keydown', (e) => {
+        const code = e.code;
+        if (!UI.infoModal.classList.contains('hidden') || !UI.bestModal.classList.contains('hidden')) {
+          if (code === 'Escape' || code === 'Space') {
+            e.preventDefault();
+            UI.infoModal.classList.add('hidden');
+            UI.bestModal.classList.add('hidden');
+          }
+          return;
+        }
+        if (code === 'ArrowUp' || code === 'KeyW') {
+          Keys.up = true;
+          e.preventDefault();
+        } else if (code === 'ArrowDown' || code === 'KeyS') {
+          Keys.down = true;
+          e.preventDefault();
+        } else if (code === 'ArrowLeft' || code === 'KeyA') {
+          Keys.left = true;
+          e.preventDefault();
+        } else if (code === 'ArrowRight' || code === 'KeyD') {
+          Keys.right = true;
+          e.preventDefault();
+        } else if (code === 'Space') {
+          e.preventDefault();
+          if (Game.state === 'playing') triggerPhaseDash();
+          else if (Game.state === 'idle' || Game.state === 'gameover') startNewRun();
+          else if (Game.state === 'paused') togglePause();
+        } else if (code === 'KeyE' || code === 'ShiftLeft' || code === 'ShiftRight') {
+          if (Game.state === 'playing') triggerGhostDrive();
+        } else if (code === 'KeyP' || code === 'Escape') {
+          if (Game.state === 'playing' || Game.state === 'paused') togglePause();
+        } else if (code === 'KeyR') {
+          startNewRun();
+        }
+      });
+
+      window.addEventListener('keyup', (e) => {
+        const code = e.code;
+        if (code === 'ArrowUp' || code === 'KeyW') Keys.up = false;
+        else if (code === 'ArrowDown' || code === 'KeyS') Keys.down = false;
+        else if (code === 'ArrowLeft' || code === 'KeyA') Keys.left = false;
+        else if (code === 'ArrowRight' || code === 'KeyD') Keys.right = false;
+      });
+
+      // On-Screen Tactile D-Pad & Action Buttons
+      function bindHoldButton(btn, keyName) {
+        const startHold = (e) => {
+          e.preventDefault();
+          Keys[keyName] = true;
+          btn.classList.add('pressed');
+        };
+        const endHold = (e) => {
+          e.preventDefault();
+          Keys[keyName] = false;
+          btn.classList.remove('pressed');
+        };
+        btn.addEventListener('pointerdown', startHold);
+        btn.addEventListener('pointerup', endHold);
+        btn.addEventListener('pointerleave', endHold);
+        btn.addEventListener('pointercancel', endHold);
+      }
+
+      bindHoldButton(UI.padUpBtn, 'up');
+      bindHoldButton(UI.padDownBtn, 'down');
+      bindHoldButton(UI.padLeftBtn, 'left');
+      bindHoldButton(UI.padRightBtn, 'right');
+
+      UI.touchDashBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        if (Game.state === 'playing') triggerPhaseDash();
+      });
+      UI.touchSurgeBtn.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        if (Game.state === 'playing') triggerGhostDrive();
+      });
+
+      // ---- Virtual joystick ----
+      function joyMove(e) {
+        const r = UI.joystick.getBoundingClientRect();
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        const R = r.width * 0.3;
+        const len = Math.hypot(dx, dy);
+        const k = len > R ? R / len : 1;
+        UI.joyKnob.style.transform = 'translate(calc(-50% + ' + (dx * k).toFixed(1) + 'px), calc(-50% + ' + (dy * k).toFixed(1) + 'px))';
+        if (len < R * 0.18) {
+          Stick.x = 0; Stick.y = 0; Stick.mag = 0;
+        } else {
+          Stick.x = dx / len;
+          Stick.y = dy / len;
+          Stick.mag = Math.min(1, len / (R * 0.85));
+        }
+      }
+      function joyRelease() {
+        Stick.id = null;
+        Stick.x = 0; Stick.y = 0; Stick.mag = 0;
+        UI.joystick.classList.remove('active');
+        UI.joyKnob.style.transform = '';
+      }
+      UI.joystick.addEventListener('pointerdown', (e) => {
+        if (Stick.id !== null) return;
+        e.preventDefault();
+        Stick.id = e.pointerId;
+        try { UI.joystick.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        UI.joystick.classList.add('active');
+        joyMove(e);
+      });
+      UI.joystick.addEventListener('pointermove', (e) => {
+        if (e.pointerId === Stick.id) joyMove(e);
+      });
+      UI.joystick.addEventListener('pointerup', (e) => { if (e.pointerId === Stick.id) joyRelease(); });
+      UI.joystick.addEventListener('pointercancel', (e) => { if (e.pointerId === Stick.id) joyRelease(); });
+
+      // ---- Responsive layout: phone/tablet = joystick by default ----
+      function isMobileLayout() {
+        const coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        return coarse || window.innerWidth < 700;
+      }
+      function applyLayout() {
+        const mob = isMobileLayout();
+        const land = mob && window.innerWidth > window.innerHeight;
+        const root = document.documentElement;
+        root.classList.toggle('mob', mob);
+        root.classList.toggle('land', land);
+        const mode = store.ctrl || (mob ? 'stick' : 'arrows');
+        root.classList.toggle('ctrl-stick', mode === 'stick');
+        UI.ctrlLabel.textContent = mode === 'stick' ? '\u21C4 ARROWS' : '\u21C4 STICK';
+        if (mode !== 'stick') joyRelease();
+        resizeCanvas();
+      }
+      UI.ctrlToggleBtn.addEventListener('click', () => {
+        const nowStick = document.documentElement.classList.contains('ctrl-stick');
+        store.ctrl = nowStick ? 'arrows' : 'stick';
+        saveStore();
+        applyLayout();
+      });
+      window.addEventListener('resize', applyLayout);
+      window.addEventListener('orientationchange', () => setTimeout(applyLayout, 120));
+
+      window.onload = function () {
+        applyLayout();
+        if (window.ResizeObserver) new ResizeObserver(() => resizeCanvas()).observe(UI.monitorFrame);
+        spawnWaveHazards(5);
+        applyTheme();
+        renderMatchHistory();
+        updateScoreUI();
+        updateHUD();
+        renderArena();
+
+        // Fade out the retro "INchase / Developed by IAB" intro screen after 2.2 seconds
+        setTimeout(() => {
+          if (UI.introSplash) {
+            UI.introSplash.classList.add('fade-out');
+          }
+        }, 2200);
+      };
+    })();
+  </script>
+</body>
+</html>
