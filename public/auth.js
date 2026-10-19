@@ -517,6 +517,32 @@ function boardBest() { return Math.max(0, Math.floor(Number(App.getData().best) 
 function boardSig(best) { return best + '|' + (profile ? profile.username + '|' + profile.photoURL : ''); }
 function boardRoots() { return Array.from(document.querySelectorAll('[data-lb]')); }
 
+// Left leaderboard panel: only for logged-in players, not on phones, and only when there is room beside the game box.
+function sideWanted() {
+  return !!profile && !document.documentElement.classList.contains('mob') && window.innerWidth >= 1100;
+}
+function updateSideMode() {
+  const side = sideWanted();
+  document.documentElement.classList.toggle('lb-side', side);
+  return side;
+}
+// How many rows fit in a list before its owner has to scroll (the pinned "me" row is always reserved for)
+function visibleRows(root, list) {
+  if (root.dataset.lb !== 'side') return BOARD_TOP;
+  const cs = getComputedStyle(list);
+  const row = parseFloat(cs.getPropertyValue('--lb-row')) || 54;
+  const gap = parseFloat(cs.getPropertyValue('--lb-gap')) || 9;
+  const room = root.clientHeight - (row + 22);
+  return Math.max(3, Math.floor((room + gap) / (row + gap)));
+}
+function syncSideMode() {
+  if (document.documentElement.classList.contains('lb-side') !== sideWanted()) applyBoardUI();
+  else if (sideWanted()) renderBoard();   // panel height changed: re-check which rows are visible
+}
+window.addEventListener('resize', syncSideMode);
+window.addEventListener('orientationchange', () => setTimeout(syncSideMode, 150));
+if (document.readyState === 'complete') syncSideMode(); else window.addEventListener('load', syncSideMode);
+
 // --- public entry for this player ---
 async function pushBoard(force) {
   const user = currentUser;
@@ -693,13 +719,13 @@ function renderBoard() {
   const rows = Board.rows;
   const idx = myUid ? rows.findIndex((r) => r.uid === myUid) : -1;
   const myRank = idx > -1 ? rows[idx].rank : Board.myRank;
-  const inTop = idx > -1 && idx < BOARD_TOP;
-  const showMe = !!profile && myRank != null && !inTop;
 
   boardRoots().forEach((root) => {
     const list = root.querySelector('.lb-list');
     const me = root.querySelector('.lb-me');
     if (!list || !me) return;
+    const inTop = idx > -1 && idx < visibleRows(root, list);
+    const showMe = !!profile && myRank != null && !inTop;
     const keep = list.scrollTop;               // appending a page must not throw the scroll position back to the top
     list.textContent = '';
     me.textContent = '';
@@ -730,9 +756,11 @@ function renderBoard() {
 // Show / hide the leaderboard pieces depending on login state and the selected tab.
 function applyBoardUI() {
   const on = !!profile;
-  const ranks = on && Board.tab === 'ranks';
-  $('board').classList.toggle('has-tabs', on);
-  $('boardTabs').classList.toggle('lb-off', !on);
+  const side = updateSideMode();     // wide screen + logged in: the ranks live in the left panel
+  const tabsOn = on && !side;        // otherwise they stay in the points board (RANKS / HISTORY tabs)
+  const ranks = tabsOn && Board.tab === 'ranks';
+  $('board').classList.toggle('has-tabs', tabsOn);
+  $('boardTabs').classList.toggle('lb-off', !tabsOn);
   $('rankPane').classList.toggle('lb-off', !ranks);
   $('historyPane').classList.toggle('lb-off', ranks);
   $('tabRanks').classList.toggle('active', Board.tab === 'ranks');

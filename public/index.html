@@ -400,6 +400,44 @@
     .lb-modal-box { margin-top: 14px; text-align: left; }
     .lb-modal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; font-size: 11px; letter-spacing: 0.1em; }
     #board.has-tabs .hist-title { display: none; }
+
+    /* ---------- Left leaderboard panel (logged-in players, desktop) ---------- */
+    #shell { width: 100%; display: flex; align-items: stretch; justify-content: center; gap: 24px; }
+    html:not(.mob) #shell > #appMain { flex: 1 1 0; min-width: 0; }
+    .mob #shell { display: contents; }
+    /* margins line the panel up with the control strip (top) and the control deck (bottom) of the main box */
+    #lbSide {
+      display: none; position: relative; flex: 0 0 clamp(260px, 22vw, 310px);
+      margin: 104px 0 86px; --lb-row: 54px; --lb-gap: 9px;
+    }
+    html.lb-side #lbSide { display: block; }
+    .mob #lbSide { display: none !important; }
+    /* absolute inner box: the panel never makes the main box taller */
+    .lb-side-in { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; padding: 14px; min-height: 0; }
+    .lb-side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 10px; border-bottom: 4px solid var(--rule); flex: 0 0 auto; }
+    .lb-side-title { font-size: 17px; letter-spacing: 0.04em; line-height: 1.1; text-shadow: 3px 3px 0 var(--orange); white-space: nowrap; }
+    .lb-side-sub { font-size: 9px; letter-spacing: 0.16em; opacity: 0.7; margin-top: 6px; white-space: nowrap; }
+    #lbSide .lb-tab.sq { width: 36px; height: 36px; padding: 0; font-size: 18px; flex: 0 0 auto; }
+    /* recessed well that holds the rows: gives the list its own depth */
+    .lb-side-well {
+      flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; padding: 10px 6px 10px 10px;
+      background: var(--white); border: 3px solid var(--ink); border-radius: 12px;
+      box-shadow: inset 0 3px 0 var(--bevel), inset 0 0 0 2px var(--bevel), 4px 4px 0 var(--ink);
+    }
+    #lbSide .lb-pane { flex: 1 1 0; min-height: 0; gap: 8px; }
+    #lbSide .lb-list { flex: 1 1 0; max-height: none; padding: 0 6px 6px 0; }
+    #lbSide .lb-me { padding: 10px 6px 4px 0; }
+    #lbSide .lb-row {
+      grid-template-columns: 40px calc(var(--lb-row) - 14px) minmax(0, 1fr) auto;
+      gap: 10px; padding: 0 10px 0 6px; border-width: 3px; border-radius: 10px; box-shadow: 3px 3px 0 var(--ink);
+    }
+    #lbSide .lb-rank { height: calc(var(--lb-row) - 18px); font-size: 13px; border-radius: 7px; }
+    #lbSide .lb-rank.long { font-size: 10px; }
+    #lbSide .lb-av.chip-avatar { width: calc(var(--lb-row) - 14px); height: calc(var(--lb-row) - 14px); border-width: 3px; font-size: 15px; }
+    #lbSide .lb-name { font-size: 15px; }
+    #lbSide .lb-score { font-size: 14px; }
+    #lbSide .lb-note { font-size: 11px; padding: 10px 2px; }
+    @media (max-height: 770px) { #lbSide { --lb-row: 46px; --lb-gap: 7px; } }
     /* Short screens: give the list the room (the page never scrolls on desktop) */
     @media (max-height: 770px) {
       :root { --lb-row: 28px; }
@@ -418,6 +456,27 @@
       <div class="mt-5 pt-4 text-xs sm:text-sm tracking-[0.22em] uppercase t-ink" style="border-top: 4px solid var(--rule);">Developed by IAB</div>
     </div>
   </div>
+
+<div id="shell">
+
+  <!-- LEFT PANEL: leaderboard (logged-in players on wide screens only; see auth.js updateSideMode) -->
+  <aside id="lbSide" class="retro-chassis rounded-2xl" aria-label="Leaderboard">
+    <div class="lb-side-in">
+      <div class="lb-side-head">
+        <div class="min-w-0">
+          <div class="lb-side-title t-ink">LEADERBOARD</div>
+          <div class="lb-side-sub">ARCADE &bull; BEST SCORES</div>
+        </div>
+        <button type="button" class="lb-tab sq" data-lb-refresh title="Refresh leaderboard" aria-label="Refresh leaderboard">&#8635;</button>
+      </div>
+      <div class="lb-side-well">
+        <div data-lb="side" class="lb-pane">
+          <div class="lb-list" role="list"></div>
+          <div class="lb-me lb-off"></div>
+        </div>
+      </div>
+    </div>
+  </aside>
 
   <main id="appMain" class="w-full max-w-5xl retro-chassis rounded-2xl p-3.5 sm:p-5 flex flex-col gap-4">
 
@@ -566,6 +625,8 @@
     </footer>
 
   </main>
+
+</div><!-- /#shell -->
 
 
   <!-- INFO MODAL -->
