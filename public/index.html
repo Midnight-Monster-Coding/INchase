@@ -352,9 +352,9 @@
     :root {
       --lb-row: 30px; --lb-gap: 4px;
       /* exactly four rows visible: 4 rows + 3 gaps + room for the row shadow */
-      --lb-max: calc(var(--lb-row) * 4 + var(--lb-gap) * 3 + 3px);
+      --lb-max: calc(var(--lb-row) * 4 + var(--lb-gap) * 3 + 9px);
     }
-    .lb-tabs { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px; padding-top: 8px; border-top: 3px solid var(--rule); flex: 0 0 auto; }
+    .lb-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-top: 8px; border-top: 3px solid var(--rule); flex: 0 0 auto; }
     .lb-tab {
       background: var(--paper); color: var(--text); border: 2px solid var(--ink); border-radius: 8px;
       box-shadow: 2px 2px 0 var(--ink); font-size: 10px; letter-spacing: 0.08em; padding: 4px 0; cursor: pointer;
@@ -368,7 +368,7 @@
       display: flex; flex-direction: column; gap: var(--lb-gap);
       flex: 0 1 auto; min-height: 0; max-height: var(--lb-max);
       overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain;
-      padding: 0 5px 3px 0; scrollbar-width: thin; scrollbar-color: var(--hard) transparent;
+      padding: 6px 5px 3px 6px; scrollbar-width: thin; scrollbar-color: var(--hard) transparent;   /* top/left room for the online glow */
     }
     .lb-list::-webkit-scrollbar { width: 8px; }
     .lb-list::-webkit-scrollbar-thumb { background: var(--hard); border-radius: 6px; }
@@ -417,7 +417,6 @@
     .lb-side-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding-bottom: 10px; border-bottom: 4px solid var(--rule); flex: 0 0 auto; }
     .lb-side-title { font-size: 17px; letter-spacing: 0.04em; line-height: 1.1; text-shadow: 3px 3px 0 var(--orange); white-space: nowrap; }
     .lb-side-sub { font-size: 9px; letter-spacing: 0.16em; opacity: 0.7; margin-top: 6px; white-space: nowrap; }
-    #lbSide .lb-tab.sq { width: 36px; height: 36px; padding: 0; font-size: 18px; flex: 0 0 auto; }
     /* recessed well that holds the rows: gives the list its own depth */
     .lb-side-well {
       flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; padding: 10px 6px 10px 10px;
@@ -425,8 +424,24 @@
       box-shadow: inset 0 3px 0 var(--bevel), inset 0 0 0 2px var(--bevel), 4px 4px 0 var(--ink);
     }
     #lbSide .lb-pane { flex: 1 1 0; min-height: 0; gap: 8px; }
-    #lbSide .lb-list { flex: 1 1 0; max-height: none; padding: 0 6px 6px 0; }
-    #lbSide .lb-me { padding: 10px 6px 4px 0; }
+    #lbSide .lb-list { flex: 1 1 0; max-height: none; padding: 9px 6px 9px 11px; }
+    #lbSide .lb-me { padding: 10px 6px 4px 11px; }
+
+    /* ---------- Online presence: green glowing ring around the avatar ---------- */
+    .chip-avatar.online {
+      border-color: #34D399;
+      box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.55), 0 0 7px 2px rgba(52, 211, 153, 0.85);
+      animation: onlinePulse 2.2s ease-in-out infinite;
+    }
+    @keyframes onlinePulse {
+      0%, 100% { box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.45), 0 0 4px 1px rgba(52, 211, 153, 0.65); }
+      50%      { box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.7),  0 0 9px 3px rgba(52, 211, 153, 0.95); }
+    }
+    @media (prefers-reduced-motion: reduce) { .chip-avatar.online { animation: none; } }
+    .lb-dot {
+      display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #34D399;
+      box-shadow: 0 0 6px 1px rgba(52, 211, 153, 0.9); margin: 0 4px 1px 0; vertical-align: middle;
+    }
     #lbSide .lb-row {
       grid-template-columns: 40px calc(var(--lb-row) - 14px) minmax(0, 1fr) auto;
       gap: 10px; padding: 0 10px 0 6px; border-width: 3px; border-radius: 10px; box-shadow: 3px 3px 0 var(--ink);
@@ -465,9 +480,8 @@
       <div class="lb-side-head">
         <div class="min-w-0">
           <div class="lb-side-title t-ink">LEADERBOARD</div>
-          <div class="lb-side-sub">ARCADE &bull; BEST SCORES</div>
+          <div class="lb-side-sub">ARCADE &bull; <span class="lb-dot"></span><span id="onlineCount">0</span> ONLINE</div>
         </div>
-        <button type="button" class="lb-tab sq" data-lb-refresh title="Refresh leaderboard" aria-label="Refresh leaderboard">&#8635;</button>
       </div>
       <div class="lb-side-well">
         <div data-lb="side" class="lb-pane">
@@ -569,7 +583,6 @@
             <div id="boardTabs" class="lb-tabs lb-off">
               <button id="tabRanks" type="button" class="lb-tab active">RANKS</button>
               <button id="tabHistory" type="button" class="lb-tab">HISTORY</button>
-              <button type="button" class="lb-tab sq" data-lb-refresh title="Refresh leaderboard" aria-label="Refresh leaderboard">&#8635;</button>
             </div>
             <div id="rankPane" data-lb class="lb-pane lb-off">
               <div class="lb-list" role="list"></div>
@@ -662,7 +675,6 @@
       <div id="lbModalBox" class="lb-modal-box mob-block lb-off">
         <div class="lb-modal-head">
           <span>LEADERBOARD</span>
-          <button type="button" class="lb-tab sq" data-lb-refresh title="Refresh leaderboard" aria-label="Refresh leaderboard">&#8635;</button>
         </div>
         <div data-lb class="lb-pane">
           <div class="lb-list" role="list"></div>

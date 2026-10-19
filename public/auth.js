@@ -26,8 +26,12 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, runTransaction, serverTimestamp,
-  collection, query, orderBy, limit, startAfter, where, getDocs, getCountFromServer, writeBatch
+  collection, query, orderBy, limit, where, getDocs, getCountFromServer, writeBatch, onSnapshot
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
+import {
+  getDatabase, ref as dbRef, push as dbPush, set as dbSet, remove as dbRemove,
+  onValue as dbOnValue, onDisconnect as dbOnDisconnect
+} from "https://www.gstatic.com/firebasejs/12.0.0/firebase-database.js";
 import { firebaseConfig } from "./firebase-config.js";
 
 /* ---------------------------------------------------------------------------
@@ -39,6 +43,8 @@ isSupported().then((ok) => { if (ok) getAnalytics(app); }).catch(() => {});
 
 const auth = getAuth(app);
 const db = getFirestore(app);
+let rtdb = null;             // Realtime Database: used only for online / offline presence
+try { rtdb = getDatabase(app); } catch (e) { console.warn('[auth] realtime database unavailable', e); }
 const App = window.INchaseApp;
 
 const $ = (id) => document.getElementById(id);
@@ -79,20 +85,28 @@ let completingLink = false;  // true while finishing an email-link login
 const splashDone = new Promise((res) => setTimeout(res, Math.max(0, 2300 - performance.now())));
 
 // Leaderboard state (the code lives in section 8; the state is here because updateAccountUI() below uses it)
-const BOARD_PAGE = 12;       // players fetched per request
+const BOARD_PAGE = 12;       // the live list grows by this many players each time you scroll to its end
+const BOARD_MAX = 200;       // never listen to more players than this
 const BOARD_TOP = 4;         // rows that are visible at once; your own row is pinned below when you are not among them
 const Board = {
   rows: [],                  // [{uid, username, photoURL, best, rank}] in global order
-  cursor: null,              // last Firestore doc of the loaded rows (for the next page)
-  done: false,               // true once the last page has been loaded
-  loading: false,
+  limit: BOARD_PAGE,         // how many players the live listener currently asks for
+  unsub: null,               // detaches the live Firestore listener
+  done: false,               // true once the listener returns fewer players than it asked for (or the cap is reached)
+  loading: false,            // true until the listener delivers its first result
   error: false,
-  loadedAt: 0,               // ms timestamp of the last successful first-page load
+  loadedAt: 0,               // ms timestamp of the last live result
   myRank: null,              // my global rank from a count query (covers "not in the loaded rows")
-  seq: 0,                    // bumped on every reset so stale responses are ignored
-  tab: 'ranks'               // 'ranks' | 'history'
+  seq: 0,                    // bumped on every (re)subscribe so stale callbacks are ignored
+  tab: 'ranks',              // 'ranks' | 'history'
+  retryTimer: null,          // reconnect timer after a listener error
+  rankTimer: null            // debounce for the rank count query
 };
 let lastBoardSig = '';       // what the leaderboard doc currently holds (avoids pointless writes)
+
+// Presence (Realtime Database): status/{uid}/{connectionId} = true while a tab is open
+const Online = new Set();    // uids that have at least one open connection right now
+const Presence = { uid: null, conn: null, unsubInfo: null, unsubAll: null };
 
 try {
   const raw = lsGet(PROFILE_KEY);
@@ -131,6 +145,7 @@ function updateAccountUI() {
   renderAvatar($('chipAvatar'), profile);
   renderAvatar($('mAvatar'), profile);
   applyBoardUI();
+  applyOnline();
 }
 updateAccountUI();
 
@@ -148,7 +163,10 @@ $('accountBtnM').addEventListener('click', openAccount);
 $('accountCloseBtn').addEventListener('click', () => hideModal('accountModal'));
 $('signOutBtn').addEventListener('click', async () => {
   hideModal('accountModal');
-  try { await signOut(auth); } catch (e) { toast('SIGN OUT FAILED'); }
+  try {
+    await stopPresence();      // go offline while we are still allowed to write
+    await signOut(auth);
+  } catch (e) { toast('SIGN OUT FAILED'); }
 });
 
 /* ---------------------------------------------------------------------------
@@ -296,9 +314,9 @@ async function pushNow() {
   } catch (e) {
     console.warn('[auth] cloud save failed', e);
   }
-  // Keep the public leaderboard entry in step with the private save, then refresh the list.
+  // Keep the public leaderboard entry in step with the private save (the live listener updates the list itself).
   const boardChanged = await pushBoard(false);
-  refreshBoard(boardChanged);
+  if (boardChanged) updateMyRank();
 }
 function schedulePush() {
   if (!currentUser || !profile || profile.uid !== currentUser.uid) return;
@@ -331,6 +349,7 @@ function finishLogin(user, username, photoURL, custom) {
   lsSet(PROFILE_KEY, JSON.stringify(profile));
   lsSet(MODE_KEY, 'user');
   updateAccountUI();
+  startPresence();
   ['welcomeModal', 'loginModal', 'nameModal'].forEach(hideModal);
   if (needPush) { needPush = false; schedulePush(); }
   syncBoardAfterLogin();
@@ -357,6 +376,8 @@ async function handleSignedIn(user) {
     console.warn('[auth] profile load failed', err);
     if (profile && profile.uid === user.uid) {
       updateAccountUI();   // offline: keep cached profile + local cache
+      startPresence();
+      startBoardLive();
     } else {
       toast('COULD NOT REACH THE SERVER. TRY AGAIN.');
     }
@@ -373,6 +394,7 @@ onAuthStateChanged(auth, async (user) => {
     profile = null;
     lsDel(PROFILE_KEY);
     resetBoard();
+    stopPresence();
     updateAccountUI();
     hideModal('nameModal');
     hideModal('accountModal');
@@ -569,13 +591,14 @@ async function pushBoard(force) {
 
 async function syncBoardAfterLogin() {
   await pushBoard(true);       // also creates the entry for accounts that existed before the leaderboard
-  loadBoard(true);
+  startBoardLive();
 }
 
 function resetBoard() {
   Board.seq++;
+  stopBoardLive();
   Board.rows = [];
-  Board.cursor = null;
+  Board.limit = BOARD_PAGE;
   Board.done = false;
   Board.loading = false;
   Board.error = false;
@@ -632,55 +655,138 @@ App.findRival = async function (score) {
   }
 };
 
-// reset = true: reload from the top (and re-count my rank). Otherwise load the next page.
-async function loadBoard(reset) {
-  if (!currentUser || !profile) return;
-  if (reset) {
-    Board.seq++;
-    Board.loading = false;
-    Board.error = false;
-  } else if (Board.loading || Board.done || Board.error || !Board.cursor) {
-    return;
-  }
-  const seq = Board.seq;
-  Board.loading = true;
-  renderBoard();
-  try {
-    const col = collection(db, 'leaderboard');
-    const q = reset
-      ? query(col, orderBy('best', 'desc'), limit(BOARD_PAGE))
-      : query(col, orderBy('best', 'desc'), startAfter(Board.cursor), limit(BOARD_PAGE));
-    const [snap, rank] = await Promise.all([getDocs(q), reset ? fetchMyRank() : Promise.resolve(Board.myRank)]);
-    if (seq !== Board.seq) return;            // a newer reset replaced this request
-    if (reset) {
-      Board.rows = [];
-      Board.cursor = null;
-      Board.myRank = rank;
-    }
-    addRows(snap.docs);
-    if (snap.docs.length) Board.cursor = snap.docs[snap.docs.length - 1];
-    Board.done = snap.docs.length < BOARD_PAGE;
-    if (reset) Board.loadedAt = Date.now();
-  } catch (e) {
-    console.warn('[auth] leaderboard load failed', e);
-    if (seq !== Board.seq) return;
-    Board.error = true;
-  }
-  Board.loading = false;
-  renderBoard();
+// --- live leaderboard: a Firestore listener on the top `Board.limit` players ---
+function stopBoardLive() {
+  if (Board.unsub) { try { Board.unsub(); } catch (e) { /* ignore */ } Board.unsub = null; }
+  clearTimeout(Board.retryTimer);
+  Board.retryTimer = null;
+  clearTimeout(Board.rankTimer);
+  Board.rankTimer = null;
 }
 
-// force = ignore the 15 s throttle
-function refreshBoard(force) {
+// (Re)subscribes with the current limit. Every change anywhere on the board arrives here by itself.
+function startBoardLive() {
   if (!currentUser || !profile) return;
-  if (!force && Board.loadedAt && Date.now() - Board.loadedAt < 15000) return;
-  loadBoard(true);
+  if (Board.unsub) { try { Board.unsub(); } catch (e) { /* ignore */ } Board.unsub = null; }
+  clearTimeout(Board.retryTimer);
+  Board.retryTimer = null;
+  const seq = ++Board.seq;
+  Board.loading = true;
+  Board.error = false;
+  renderBoard();
+  const q = query(collection(db, 'leaderboard'), orderBy('best', 'desc'), limit(Board.limit));
+  Board.unsub = onSnapshot(q, (snap) => {
+    if (seq !== Board.seq) return;
+    Board.rows = [];
+    addRows(snap.docs);
+    Board.done = snap.docs.length < Board.limit || Board.limit >= BOARD_MAX;
+    Board.loading = false;
+    Board.error = false;
+    Board.loadedAt = Date.now();
+    renderBoard();
+    updateMyRank();
+  }, (err) => {
+    console.warn('[auth] leaderboard listener failed', err);
+    if (seq !== Board.seq) return;
+    Board.unsub = null;
+    Board.loading = false;
+    Board.error = true;
+    renderBoard();
+    clearTimeout(Board.retryTimer);
+    Board.retryTimer = setTimeout(startBoardLive, 6000);   // try again by itself
+  });
+}
+
+// Scrolled to the end of a list: listen to a few more players
+function growBoard() {
+  if (!currentUser || !profile || Board.loading || Board.done || Board.error) return;
+  if (Board.limit >= BOARD_MAX) return;
+  Board.limit = Math.min(BOARD_MAX, Board.limit + BOARD_PAGE);
+  startBoardLive();
+}
+
+// My global rank when I am not among the loaded rows (one cheap count query, debounced)
+function updateMyRank() {
+  clearTimeout(Board.rankTimer);
+  Board.rankTimer = null;
+  if (!currentUser || !profile) return;
+  const myUid = currentUser.uid;
+  if (Board.rows.some((r) => r.uid === myUid)) return;     // the rows already tell my rank
+  const seq = Board.seq;
+  Board.rankTimer = setTimeout(async () => {
+    Board.rankTimer = null;
+    const rank = await fetchMyRank();
+    if (seq !== Board.seq || !currentUser || !profile) return;
+    if (rank != null && rank !== Board.myRank) { Board.myRank = rank; renderBoard(); }
+  }, 1200);
+}
+
+// --- presence: who is online right now (Realtime Database) ---
+// Every open tab writes status/{uid}/{its own id} = true and registers an onDisconnect remove, so the SERVER
+// deletes it when the tab closes, the phone loses signal or the browser crashes. A player is online while their
+// status/{uid} node has at least one child (this also keeps them online when one of two tabs is closed).
+function startPresence() {
+  if (!rtdb || !currentUser || !profile) return;
+  if (Presence.uid === currentUser.uid && Presence.unsubInfo) return;   // already running for this account
+  stopPresence();
+  const uid = currentUser.uid;
+  Presence.uid = uid;
+  try {
+    const connRef = dbPush(dbRef(rtdb, 'status/' + uid));               // new unique id for THIS tab (nothing written yet)
+    Presence.conn = connRef;
+    // .info/connected flips true on every (re)connect, so presence heals itself after a network drop
+    Presence.unsubInfo = dbOnValue(dbRef(rtdb, '.info/connected'), (snap) => {
+      if (snap.val() !== true || Presence.conn !== connRef) return;
+      // Register the server-side cleanup first, then mark online: an "online" mark can never be left behind
+      dbOnDisconnect(connRef).remove()
+        .then(() => (Presence.conn === connRef ? dbSet(connRef, true) : null))
+        .then(() => log('presence online'))
+        .catch((e) => console.warn('[auth] presence write failed', e));
+    });
+    Presence.unsubAll = dbOnValue(dbRef(rtdb, 'status'), (snap) => {
+      Online.clear();
+      snap.forEach((child) => { if (child.hasChildren()) Online.add(child.key); });
+      applyOnline();
+    }, (err) => console.warn('[auth] presence read failed', err));
+  } catch (e) {
+    console.warn('[auth] presence unavailable', e);
+  }
+}
+
+// Goes offline. Called BEFORE signOut(): after sign-out the rules would no longer let us delete our mark.
+async function stopPresence() {
+  const c = Presence.conn;
+  if (Presence.unsubInfo) { try { Presence.unsubInfo(); } catch (e) { /* ignore */ } Presence.unsubInfo = null; }
+  if (Presence.unsubAll) { try { Presence.unsubAll(); } catch (e) { /* ignore */ } Presence.unsubAll = null; }
+  Presence.conn = null;
+  Presence.uid = null;
+  Online.clear();
+  applyOnline();
+  if (!c) return;
+  try {
+    // offline: do not hold up the sign-out waiting for the server (the onDisconnect cleanup still covers us)
+    await Promise.race([dbRemove(c), new Promise((res) => setTimeout(res, 2000))]);
+  } catch (e) { /* ignore */ }
+  try { dbOnDisconnect(c).cancel().catch(() => {}); } catch (e) { /* ignore */ }
+}
+
+// Green glow on every online player's avatar (leaderboard rows, footer chip, account photo) + the online counter
+function applyOnline() {
+  document.querySelectorAll('.lb-row[data-uid]').forEach((row) => {
+    const av = row.querySelector('.lb-av');
+    if (av) av.classList.toggle('online', Online.has(row.dataset.uid));
+  });
+  const mine = !!profile && Online.has(profile.uid);
+  ['chipAvatar', 'aAvatar'].forEach((id) => { const el = $(id); if (el) el.classList.toggle('online', mine); });
+  const n = $('onlineCount');
+  if (n) n.textContent = String(Online.size);
 }
 
 // --- drawing ---
 function buildRow(rank, p, isMe) {
   const row = document.createElement('div');
   row.className = 'lb-row' + (isMe ? ' me' : '');
+  row.dataset.uid = p.uid || '';
   row.setAttribute('role', 'listitem');
   row.title = '#' + p.username + ' \u2022 ' + (Number(p.best) || 0).toLocaleString();
 
@@ -689,7 +795,7 @@ function buildRow(rank, p, isMe) {
   r.textContent = String(rank);
 
   const av = document.createElement('span');
-  av.className = 'chip-avatar lb-av';
+  av.className = 'chip-avatar lb-av' + (p.uid && Online.has(p.uid) ? ' online' : '');
   renderAvatar(av, p);
 
   const n = document.createElement('span');
@@ -733,10 +839,10 @@ function renderBoard() {
 
     if (rows.length) {
       rows.forEach((r) => list.appendChild(buildRow(r.rank, r, r.uid === myUid)));
-      if (Board.error) list.appendChild(buildNote('COULD NOT LOAD MORE. TAP \u21BB TO RETRY.'));
+      if (Board.error) list.appendChild(buildNote('CONNECTION LOST. RECONNECTING...'));
       else if (Board.loading && !Board.done) list.appendChild(buildNote('LOADING...'));
     } else if (Board.error) {
-      list.appendChild(buildNote('COULD NOT LOAD. TAP \u21BB TO RETRY.'));
+      list.appendChild(buildNote('CONNECTION LOST. RECONNECTING...'));
     } else if (Board.loading || !Board.loadedAt) {
       list.appendChild(buildNote('LOADING...'));
     } else {
@@ -745,7 +851,7 @@ function renderBoard() {
     list.scrollTop = keep;
 
     if (showMe) {
-      me.appendChild(buildRow(myRank, { username: profile.username, photoURL: profile.photoURL, best: boardBest() }, true));
+      me.appendChild(buildRow(myRank, { uid: profile.uid, username: profile.username, photoURL: profile.photoURL, best: boardBest() }, true));
       me.classList.remove('lb-off');
     } else {
       me.classList.add('lb-off');
@@ -769,33 +875,21 @@ function applyBoardUI() {
   renderBoard();
 }
 
-$('tabRanks').addEventListener('click', () => { Board.tab = 'ranks'; applyBoardUI(); refreshBoard(false); });
+$('tabRanks').addEventListener('click', () => { Board.tab = 'ranks'; applyBoardUI(); });
 $('tabHistory').addEventListener('click', () => { Board.tab = 'history'; applyBoardUI(); });
 
-let lastManualRefresh = 0;
-document.addEventListener('click', (e) => {
-  const btn = e.target && e.target.closest ? e.target.closest('[data-lb-refresh]') : null;
-  if (!btn) return;
-  if (Date.now() - lastManualRefresh < 2000) return;   // protects the free Firestore quota from button mashing
-  lastManualRefresh = Date.now();
-  refreshBoard(true);
-});
-
-// Opening the BEST screen (the phone layout shows the leaderboard there)
-$('bestBtn').addEventListener('click', () => refreshBoard(false));
-
-// Load the next page when the list is scrolled near its end (each list has its own box)
+// The list is live (no refresh button). Scrolling near the end of a list makes it listen to a few more players.
 boardRoots().forEach((root) => {
   const list = root.querySelector('.lb-list');
   if (!list) return;
   list.addEventListener('scroll', () => {
-    if (list.scrollTop + list.clientHeight >= list.scrollHeight - 30) loadBoard(false);
+    if (list.scrollTop + list.clientHeight >= list.scrollHeight - 30) growBoard();
   }, { passive: true });
 });
 
-// Coming back to the tab after a while
+// Coming back to the tab: make sure the live listener is running (it may have dropped while the tab slept)
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && Board.loadedAt && Date.now() - Board.loadedAt > 120000) refreshBoard(false);
+  if (!document.hidden && currentUser && profile && !Board.unsub) startBoardLive();
 });
 
 // --- profile photo ---
@@ -864,7 +958,7 @@ async function applyPhoto(dataUrl) {
   updateAccountUI();
   renderAvatar($('aAvatar'), profile);
   $('photoRemoveBtn').classList.toggle('hidden', !custom);
-  refreshBoard(true);
+  applyOnline();           // the avatar element was redrawn: keep its glow
 }
 
 $('photoChangeBtn').addEventListener('click', () => $('photoInput').click());

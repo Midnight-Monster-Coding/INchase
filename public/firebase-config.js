@@ -1,8 +1,10 @@
 // Firebase web config for the INchase project.
-// (These values are public identifiers, not secrets. Access is controlled by Firebase Auth + firestore.rules.)
+// (These values are public identifiers, not secrets. Access is controlled by Firebase Auth + firestore.rules + database.rules.)
 export const firebaseConfig = {
   apiKey: "AIzaSyB4XrRiVfKwBB0vpNQVp3owB4kIdcpX9Q0",
   authDomain: "inchase.firebaseapp.com",
+  // Realtime Database (online/offline presence). Singapore region, copied from Firebase console > Realtime Database > Data.
+  databaseURL: "https://inchase-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "inchase",
   storageBucket: "inchase.firebasestorage.app",
   messagingSenderId: "899688378990",
