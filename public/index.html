@@ -331,7 +331,7 @@
     input, textarea { user-select: text; -webkit-user-select: text; }
     .name-input { background: transparent; border: 0; outline: 0; color: var(--text); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-weight: 600; letter-spacing: 0; font-size: 20px; width: 100%; min-width: 0; text-transform: none; }
     /* Keep usernames in their real letter case (Bungee only has capitals) */
-    #chipName, #aName { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-weight: 700; letter-spacing: 0; }
+    #chipName, #aName, #pName { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-weight: 700; letter-spacing: 0; }
     #chipAvatar { width: 24px; height: 24px; border-width: 2px; font-size: 11px; }
     /* Desktop: fit everything in one frame, no page scroll (small windows may still scroll) */
     @media (min-height: 640px) { html:not(.mob) body { height: 100vh; overflow: hidden; } }
@@ -438,6 +438,22 @@
       50%      { box-shadow: 0 0 0 1px rgba(52, 211, 153, 0.7),  0 0 9px 3px rgba(52, 211, 153, 0.95); }
     }
     @media (prefers-reduced-motion: reduce) { .chip-avatar.online { animation: none; } }
+
+    /* ---------- Name hover card + clickable names ---------- */
+    .lb-name.lb-link { cursor: pointer; }
+    .lb-row:not(.me) .lb-name.lb-link:hover { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+    .lb-tip {
+      position: fixed; left: 0; top: 0; z-index: 80; pointer-events: none;
+      width: max-content; max-width: min(280px, calc(100vw - 16px)); word-break: break-all;
+      padding: 7px 12px; border: 3px solid var(--ink); border-radius: 10px;
+      background: var(--paper); color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-weight: 700; font-size: 14px;
+      box-shadow: inset 0 2px 0 var(--bevel), 4px 4px 0 var(--hard);
+      opacity: 0; transform: translateY(6px) scale(0.92); transform-origin: 20px 100%;
+      transition: opacity 0.12s ease, transform 0.14s ease;
+    }
+    .lb-tip.below { transform: translateY(-6px) scale(0.92); transform-origin: 20px 0; }
+    .lb-tip.show { opacity: 1; transform: translateY(0) scale(1); }
     .lb-dot {
       display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #34D399;
       box-shadow: 0 0 6px 1px rgba(52, 211, 153, 0.9); margin: 0 4px 1px 0; vertical-align: middle;
@@ -688,6 +704,28 @@
 
   <!-- ==================== AUTH MODALS ==================== -->
   <div id="toast" class="hidden fixed top-3 left-1/2 -translate-x-1/2 z-[70] nb-pill c-lime text-xs" style="white-space:normal;max-width:90vw;text-align:center;"></div>
+
+  <!-- Hover card that shows a player's full name (positioned by auth.js) -->
+  <div id="lbTip" class="lb-tip" role="tooltip"></div>
+
+  <!-- PLAYER CARD: opens when you click another player's name on the leaderboard -->
+  <div id="playerModal" class="auth-modal hidden fixed inset-0 z-[55] flex items-center justify-center p-5 bg-black/80">
+    <div class="max-w-xs w-full retro-chassis rounded-2xl p-6 text-center">
+      <div id="pAvatar" class="chip-avatar mx-auto" style="width:84px;height:84px;font-size:32px;" aria-hidden="true"></div>
+      <div id="pName" class="text-xl mt-3 break-all">#USER</div>
+      <div class="grid grid-cols-2 gap-3 mt-4">
+        <div class="retro-bay c-orange rounded-xl p-2.5">
+          <div class="text-[10px] tracking-widest">HIGH SCORE</div>
+          <div id="pBest" class="text-2xl tabular-nums mt-1">0</div>
+        </div>
+        <div class="retro-bay c-white rounded-xl p-2.5">
+          <div class="text-[10px] tracking-widest">RANK</div>
+          <div id="pRank" class="text-2xl tabular-nums mt-1">1</div>
+        </div>
+      </div>
+      <button id="playerCloseBtn" type="button" class="retro-key retro-key-active w-full mt-5 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
+    </div>
+  </div>
 
   <!-- WELCOME (first visit) -->
   <div id="welcomeModal" class="auth-modal hidden fixed inset-0 z-[55] flex items-center justify-center p-5 bg-black/80">

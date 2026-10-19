@@ -108,6 +108,10 @@ let lastBoardSig = '';       // what the leaderboard doc currently holds (avoids
 const Online = new Set();    // uids that have at least one open connection right now
 const Presence = { uid: null, conn: null, unsubInfo: null, unsubAll: null };
 
+// Player card + name hover card (declared here because renderBoard() runs at startup, before section 8)
+let playerCardUid = null;    // uid shown in the player card (null = closed)
+let tipFor = null;           // name element the hover card is currently showing for
+
 try {
   const raw = lsGet(PROFILE_KEY);
   if (raw && lsGet(MODE_KEY) === 'user') profile = JSON.parse(raw);
@@ -398,6 +402,7 @@ onAuthStateChanged(auth, async (user) => {
     updateAccountUI();
     hideModal('nameModal');
     hideModal('accountModal');
+    closePlayerCard();
     const mode = lsGet(MODE_KEY);
     if (!mode && !completingLink) { await splashDone; if (!currentUser && !completingLink) openWelcome(); }
     else if (mode === 'user') lsSet(MODE_KEY, 'guest');
@@ -519,7 +524,8 @@ $('nameSignOutBtn').addEventListener('click', async () => {
  * ------------------------------------------------------------------------ */
 window.addEventListener('keydown', (e) => {
   if (e.code !== 'Escape') return;
-  if (isOpen('accountModal')) hideModal('accountModal');
+  if (isOpen('playerModal')) closePlayerCard();
+  else if (isOpen('accountModal')) hideModal('accountModal');
   else if (isOpen('loginModal')) closeLogin();
 });
 
@@ -776,8 +782,9 @@ function applyOnline() {
     const av = row.querySelector('.lb-av');
     if (av) av.classList.toggle('online', Online.has(row.dataset.uid));
   });
-  const mine = !!profile && Online.has(profile.uid);
-  ['chipAvatar', 'aAvatar'].forEach((id) => { const el = $(id); if (el) el.classList.toggle('online', mine); });
+  // the glow lives in the leaderboard only (and on a player's own card), never on my own footer chip / account photo
+  const card = $('pAvatar');
+  if (card && playerCardUid) card.classList.toggle('online', Online.has(playerCardUid));
   const n = $('onlineCount');
   if (n) n.textContent = String(Online.size);
 }
@@ -788,7 +795,6 @@ function buildRow(rank, p, isMe) {
   row.className = 'lb-row' + (isMe ? ' me' : '');
   row.dataset.uid = p.uid || '';
   row.setAttribute('role', 'listitem');
-  row.title = '#' + p.username + ' \u2022 ' + (Number(p.best) || 0).toLocaleString();
 
   const r = document.createElement('span');
   r.className = 'lb-rank tabular-nums' + (rank <= 3 ? ' r' + rank : '') + (rank >= 1000 ? ' long' : '');
@@ -799,7 +805,7 @@ function buildRow(rank, p, isMe) {
   renderAvatar(av, p);
 
   const n = document.createElement('span');
-  n.className = 'lb-name';
+  n.className = 'lb-name' + (isMe ? '' : ' lb-link');   // other players' names are clickable (player card)
   n.textContent = '#' + p.username;
 
   const s = document.createElement('span');
@@ -857,7 +863,78 @@ function renderBoard() {
       me.classList.add('lb-off');
     }
   });
+  if (tipFor && !document.body.contains(tipFor)) hideTip();   // the hovered name was just redrawn
+  refreshPlayerCard();                                         // keep an open player card live
 }
+
+// --- hover card: the full name pops up above a name you point at ---
+function showTip(n) {
+  const tip = $('lbTip');
+  if (!tip) return;
+  tip.textContent = n.textContent;
+  tipFor = n;
+  const r = n.getBoundingClientRect();
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  const left = Math.max(8, Math.min(r.left - 6, window.innerWidth - w - 8));
+  let top = r.top - h - 12;
+  const below = top < 8;                       // no room above: pop up underneath instead
+  if (below) top = r.bottom + 12;
+  tip.style.left = left + 'px';
+  tip.style.top = top + 'px';
+  tip.classList.toggle('below', below);
+  tip.classList.add('show');
+}
+function hideTip() {
+  tipFor = null;
+  const tip = $('lbTip');
+  if (tip) tip.classList.remove('show');
+}
+document.addEventListener('mouseover', (e) => {
+  const n = e.target && e.target.closest ? e.target.closest('.lb-name') : null;
+  if (n && n !== tipFor) showTip(n);
+});
+document.addEventListener('mouseout', (e) => {
+  const n = e.target && e.target.closest ? e.target.closest('.lb-name') : null;
+  if (n && !(e.relatedTarget && n.contains(e.relatedTarget))) hideTip();
+});
+window.addEventListener('scroll', hideTip, true);   // capture: also fires for the scrolling lists
+
+// --- player card: click another player's name to see their profile ---
+function fillPlayerCard(r) {
+  const av = $('pAvatar');
+  renderAvatar(av, r);
+  av.classList.toggle('online', Online.has(r.uid));
+  $('pName').textContent = '#' + r.username;
+  $('pBest').textContent = (Number(r.best) || 0).toLocaleString();
+  $('pRank').textContent = String(r.rank);
+}
+function openPlayerCard(uid) {
+  const r = Board.rows.find((x) => x.uid === uid);
+  if (!r) return;
+  playerCardUid = uid;
+  fillPlayerCard(r);
+  showModal('playerModal');
+}
+function refreshPlayerCard() {
+  if (!playerCardUid || !isOpen('playerModal')) return;
+  const r = Board.rows.find((x) => x.uid === playerCardUid);
+  if (r) fillPlayerCard(r);
+}
+function closePlayerCard() {
+  playerCardUid = null;
+  hideModal('playerModal');
+}
+$('playerCloseBtn').addEventListener('click', closePlayerCard);
+$('playerModal').addEventListener('click', (e) => { if (e.target === $('playerModal')) closePlayerCard(); });
+document.addEventListener('click', (e) => {
+  const n = e.target && e.target.closest ? e.target.closest('.lb-name.lb-link') : null;
+  if (!n || !profile) return;
+  const row = n.closest('.lb-row');
+  if (!row || !row.dataset.uid) return;
+  hideTip();
+  openPlayerCard(row.dataset.uid);
+});
 
 // Show / hide the leaderboard pieces depending on login state and the selected tab.
 function applyBoardUI() {
