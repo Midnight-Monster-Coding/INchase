@@ -64,7 +64,7 @@
       --orange: #FF9F1C;
     }
 
-    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 
     body {
       background-color: var(--page);
@@ -208,7 +208,8 @@
     .app-foot { border-top: 4px solid var(--rule); }
     .hist-title { border-top: 3px solid var(--rule); }
 
-    html, body { overscroll-behavior: none; }
+    html, body { overscroll-behavior: none; touch-action: manipulation; }
+    html.mob { overflow: hidden; height: 100%; }
     body { -webkit-touch-callout: none; }
     button { touch-action: manipulation; }
     #infoModal > div, #bestModal > div { max-height: 92vh; max-height: 92dvh; overflow-y: auto; }
@@ -1521,6 +1522,7 @@
       }
 
       // Active Green Resonance Prism Target
+      let prismLockT = 0; // short lock after a pickup so one target can never score on consecutive frames
       const Prism = {
         x: 200,
         y: 200,
@@ -1722,29 +1724,47 @@
        * 7. SPAWNING & GAMEPLAY MECHANICS
        * ========================================================================= */
       function relocatePrism() {
-        const margin = 48;
-        for (let attempt = 0; attempt < 24; attempt++) {
-          const nx = margin + Math.random() * (arenaW - margin * 2);
-          const ny = margin + Math.random() * (arenaH - margin * 2);
-          const dx = nx - Player.x;
-          const dy = ny - Player.y;
-          if (dx * dx + dy * dy <= 130 * 130) continue;
-          // Never drop the green target inside (or hugging) a red drone
-          let clear = true;
-          for (let i = 0; i < entCount; i++) {
-            if (entType[i] === 3) continue;
-            const gap = Prism.radius + 14 + entRadius[i] * HAZARD_BOUND[entType[i]];
-            const hx = nx - entX[i];
-            const hy = ny - entY[i];
-            if (hx * hx + hy * hy < gap * gap) { clear = false; break; }
+        // Margin shrinks on very short arenas so there is always room to place the target
+        const margin = Math.max(Prism.radius + 8, Math.min(48, arenaW * 0.25, arenaH * 0.25));
+        const spanX = Math.max(0, arenaW - margin * 2);
+        const spanY = Math.max(0, arenaH - margin * 2);
+        // The target may NEVER land inside the pickup zone (+ a safety gap), or it scores every frame
+        const minPick = Player.radius + Prism.radius + 4 + 24;
+        // Preferred distance first (130), relaxed step by step only when the arena is too small for it
+        const rounds = [130, 100, 70, minPick];
+        for (let r = 0; r < rounds.length; r++) {
+          const need = Math.max(rounds[r], minPick);
+          for (let attempt = 0; attempt < 24; attempt++) {
+            const nx = margin + Math.random() * spanX;
+            const ny = margin + Math.random() * spanY;
+            const dx = nx - Player.x;
+            const dy = ny - Player.y;
+            if (dx * dx + dy * dy <= need * need) continue;
+            // Never drop the green target inside (or hugging) a red drone
+            let clear = true;
+            for (let i = 0; i < entCount; i++) {
+              if (entType[i] === 3) continue;
+              const gap = Prism.radius + 14 + entRadius[i] * HAZARD_BOUND[entType[i]];
+              const hx = nx - entX[i];
+              const hy = ny - entY[i];
+              if (hx * hx + hy * hy < gap * gap) { clear = false; break; }
+            }
+            if (!clear) continue;
+            Prism.x = nx;
+            Prism.y = ny;
+            return;
           }
-          if (!clear) continue;
-          Prism.x = nx;
-          Prism.y = ny;
-          return;
         }
-        Prism.x = arenaW * 0.5;
-        Prism.y = arenaH * 0.5;
+        // Last resort: the spot (corners + random samples) farthest from the player, never the centre
+        let bx = margin, by = margin, bd = -1;
+        const cands = [[margin, margin], [arenaW - margin, margin], [margin, arenaH - margin], [arenaW - margin, arenaH - margin]];
+        for (let k = 0; k < 16; k++) cands.push([margin + Math.random() * spanX, margin + Math.random() * spanY]);
+        for (let k = 0; k < cands.length; k++) {
+          const d = Math.hypot(cands[k][0] - Player.x, cands[k][1] - Player.y);
+          if (d > bd) { bd = d; bx = cands[k][0]; by = cands[k][1]; }
+        }
+        Prism.x = bx;
+        Prism.y = by;
       }
 
       const HAZARD_LIFE_MIN = 8;
@@ -2182,9 +2202,11 @@
           else if (Prism.y > arenaH - 40) { Prism.y = arenaH - 40; Prism.vy = -Math.abs(Prism.vy); }
         }
         Prism.pulse += dt * 5.0;
+        if (prismLockT > 0) prismLockT -= dt;
         const pickupDist = Player.radius + Prism.radius + 4;
         // Swept: counts if the core passed through the pickup zone at any point this step
-        if (ptSegDist(Prism.x, Prism.y, prevPX, prevPY, Player.x, Player.y) <= pickupDist) {
+        if (prismLockT <= 0 && ptSegDist(Prism.x, Prism.y, prevPX, prevPY, Player.x, Player.y) <= pickupDist) {
+          prismLockT = 0.15;
           const prismPts = 100 * Game.multiplier; // multiplier applies to green targets only
           Game.multiplier = Math.min(8, Game.multiplier + 1);
           if (Game.multiplier > Game.peakMultiplier) {
@@ -2802,6 +2824,7 @@
 
         Game.state = 'playing';
         Game.score = 0;
+        prismLockT = 0;
         updateScoreUI();
         UI.overlayStats.classList.add('hidden');
         UI.newBestTag.classList.add('hidden');
@@ -3179,6 +3202,27 @@
       });
       window.addEventListener('resize', applyLayout);
       window.addEventListener('orientationchange', () => setTimeout(applyLayout, 120));
+
+      // ---- Lock zoom / selection (Android Chrome can ignore user-scalable=no) ----
+      function inTextField(t) {
+        const el = t && t.nodeType === 1 ? t : (t && t.parentElement);
+        return !!(el && el.closest && el.closest('input, textarea, [contenteditable="true"]'));
+      }
+      ['gesturestart', 'gesturechange', 'gestureend'].forEach((n) => {
+        document.addEventListener(n, (e) => e.preventDefault(), { passive: false });
+      });
+      document.addEventListener('touchmove', (e) => {
+        if (e.touches.length > 1) e.preventDefault(); // pinch
+      }, { passive: false });
+      let lastTouchEndTs = 0;
+      document.addEventListener('touchend', (e) => {
+        const now = Date.now();
+        if (now - lastTouchEndTs < 350 && !inTextField(e.target)) e.preventDefault(); // double-tap zoom
+        lastTouchEndTs = now;
+      }, { passive: false });
+      document.addEventListener('dblclick', (e) => { if (!inTextField(e.target)) e.preventDefault(); }, { passive: false });
+      document.addEventListener('selectstart', (e) => { if (!inTextField(e.target)) e.preventDefault(); });
+      document.addEventListener('contextmenu', (e) => { if (!inTextField(e.target)) e.preventDefault(); });
 
       // Bridge used by the Firebase login module
       window.INchaseApp = {
