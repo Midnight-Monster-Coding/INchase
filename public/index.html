@@ -681,6 +681,15 @@
     </div>
   </div>
 
+  <!-- BLITZ NOTICE (shown once, the first time a player switches to Blitz) -->
+  <div id="blitzNoticeModal" class="hidden fixed inset-0 z-40 flex items-center justify-center p-5 bg-black/70">
+    <div class="max-w-sm w-full retro-chassis rounded-2xl p-6 text-center">
+      <h2 class="text-xl mb-3 t-ink" style="text-shadow: 2px 2px 0 var(--cyan);">BLITZ MODE</h2>
+      <p class="text-[12px] leading-relaxed">BLITZ HIGH SCORES ARE NOT SAVED IN THE LEADERBOARD. ONLY ARCADE SCORES COUNT.</p>
+      <button id="blitzNoticeOkBtn" type="button" class="retro-key retro-key-active w-full py-3 px-6 rounded-xl text-sm tracking-wide mt-5">GOT IT</button>
+    </div>
+  </div>
+
   <!-- BEST SCORE SCREEN -->
   <div id="bestModal" class="hidden fixed inset-0 z-40 flex items-center justify-center p-5 bg-black/70">
     <div class="max-w-sm w-full retro-chassis rounded-2xl p-6 text-center">
@@ -1677,9 +1686,54 @@
       document.getElementById('modeBar').addEventListener('click', (e) => {
         const b = e.target.closest('[data-mode]');
         if (!b || b.disabled) return;
+        const prevMode = Game.mode;
         Game.mode = b.dataset.mode;
         updateHUD();
+        if (Game.state === 'gameover' && endSnap && Game.mode !== prevMode) syncGameOverOverlay();
+        if (Game.mode === 'blitz' && prevMode !== 'blitz') maybeShowBlitzNotice();
       });
+
+      // After a match, picking another mode turns the game-over card into a ready card for that mode (button: PLAY)
+      function syncGameOverOverlay() {
+        if (Game.mode === endSnap.mode) {
+          // Back to the mode that just finished: show its result again
+          UI.overlayBadge.textContent = 'GAME OVER';
+          UI.overlayTitle.textContent = endSnap.title;
+          UI.overlayPrimaryBtn.textContent = 'PLAY AGAIN';
+          UI.overlayStats.classList.remove('hidden');
+          UI.newBestTag.classList.toggle('hidden', endSnap.newBestHidden);
+          UI.rivalMsg.classList.toggle('hidden', endSnap.rivalHidden);
+          endSnap.showing = true;
+          return;
+        }
+        if (endSnap.showing) {
+          endSnap.newBestHidden = UI.newBestTag.classList.contains('hidden');
+          endSnap.rivalHidden = UI.rivalMsg.classList.contains('hidden');
+          endSnap.showing = false;
+        }
+        rivalSeq++; // drop a pending "beat #name" lookup
+        UI.overlayBadge.textContent = 'READY';
+        UI.overlayTitle.textContent = Game.mode === 'blitz' ? 'BLITZ MODE' : 'ARCADE MODE';
+        UI.overlayPrimaryBtn.textContent = 'PLAY';
+        UI.overlayStats.classList.add('hidden');
+        UI.newBestTag.classList.add('hidden');
+        UI.rivalMsg.classList.add('hidden');
+      }
+
+      // One-time notice (per device) the first time someone switches to Blitz
+      const BLITZ_NOTICE_KEY = 'inchase_blitz_notice_seen';
+      function maybeShowBlitzNotice() {
+        let seen = false;
+        try { seen = localStorage.getItem(BLITZ_NOTICE_KEY) === '1'; } catch (e) {}
+        if (seen) return;
+        try { localStorage.setItem(BLITZ_NOTICE_KEY, '1'); } catch (e) {}
+        document.getElementById('blitzNoticeModal').classList.remove('hidden');
+      }
+      (function () {
+        const m = document.getElementById('blitzNoticeModal');
+        document.getElementById('blitzNoticeOkBtn').addEventListener('click', () => m.classList.add('hidden'));
+        m.addEventListener('click', (e) => { if (e.target === m) m.classList.add('hidden'); });
+      })();
 
       function updateHUD() {
         if (Game.overdriveTimer > 0) {
@@ -2823,6 +2877,7 @@
         waveCount = 0;
 
         Game.state = 'playing';
+        endSnap = null;
         Game.score = 0;
         prismLockT = 0;
         updateScoreUI();
@@ -2903,6 +2958,7 @@
       }
 
       let rivalSeq = 0;
+      let endSnap = null; // overlay state of the match that just finished (null while not on the game-over screen)
       // "Beat #name by N": the closest player above this score (lookup lives in auth.js)
       function showRival(score) {
         const find = window.INchaseApp && window.INchaseApp.findRival;
@@ -2956,6 +3012,7 @@
         UI.overlayBadge.textContent = 'GAME OVER';
         UI.overlayTitle.textContent = isBlitz ? 'BLITZ COMPLETE' : 'WAVE ' + Game.wave + ' REACHED';
         UI.overlayPrimaryBtn.textContent = 'PLAY AGAIN';
+        endSnap = { mode: Game.mode, title: UI.overlayTitle.textContent, showing: true, newBestHidden: !isNewBest, rivalHidden: true };
         UI.rivalMsg.classList.add('hidden');
         if (isArcade && Game.score > 0) showRival(Game.score);
         UI.canvasOverlay.classList.remove('hidden');
@@ -3066,11 +3123,13 @@
       window.addEventListener('keydown', (e) => {
         const code = e.code;
         if (window.INchaseAuthBusy && window.INchaseAuthBusy()) return;
-        if (!UI.infoModal.classList.contains('hidden') || !UI.bestModal.classList.contains('hidden')) {
+        const blitzNoticeEl = document.getElementById('blitzNoticeModal');
+        if (!UI.infoModal.classList.contains('hidden') || !UI.bestModal.classList.contains('hidden') || !blitzNoticeEl.classList.contains('hidden')) {
           if (code === 'Escape' || code === 'Space') {
             e.preventDefault();
             UI.infoModal.classList.add('hidden');
             UI.bestModal.classList.add('hidden');
+            blitzNoticeEl.classList.add('hidden');
           }
           return;
         }
