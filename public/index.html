@@ -519,6 +519,14 @@
       html:not(.mob) #board.has-tabs #hudScore { font-size: 34px; }
     }
   </style>
+  <script>
+    // Register the service worker (needed for the PWA install prompt + offline start)
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', function () {
+        navigator.serviceWorker.register('/sw.js').catch(function () {});
+      });
+    }
+  </script>
 </head>
 <body class="min-h-screen flex flex-col items-center justify-center p-2 sm:p-4">
 
