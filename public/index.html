@@ -510,6 +510,26 @@
     #lbSide .lb-name { font-size: 15px; }
     #lbSide .lb-score { font-size: 14px; }
     #lbSide .lb-note { font-size: 11px; padding: 10px 2px; }
+    /* ---------- "Creations of IAB" popup (opened from the footer) ---------- */
+    .iab-link {
+      font: inherit; letter-spacing: inherit; text-transform: inherit; color: inherit;
+      background: none; border: 0; padding: 0 1px; cursor: pointer;
+      text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px;
+    }
+    .iab-link:hover { color: var(--cyan); }
+    .iab-link:focus-visible { outline: 2px solid var(--cyan); outline-offset: 3px; border-radius: 3px; }
+    .creations-list { list-style: none; margin: 0; padding: 0 6px 0 0; display: flex; flex-direction: column; gap: 14px; }
+    .creation-row {
+      display: flex; align-items: center; gap: 14px; padding: 8px 14px 8px 8px;
+      border-radius: 14px; text-align: left; text-decoration: none; color: var(--text);
+    }
+    .creation-logo {
+      width: 52px; height: 52px; flex: 0 0 auto; object-fit: cover; border-radius: 12px;
+      background: #0A0A0A; border: 3px solid var(--ink);
+    }
+    .creation-name { flex: 1 1 auto; min-width: 0; font-size: 16px; letter-spacing: 0.04em; line-height: 1.1; overflow-wrap: anywhere; }
+    .creation-go { flex: 0 0 auto; font-size: 18px; line-height: 1; }
+    .creation-row:focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; }
     @media (max-height: 770px) { #lbSide { --lb-row: 46px; --lb-gap: 7px; } }
     /* Short screens: give the list the room (the page never scrolls on desktop) */
     @media (max-height: 770px) {
@@ -699,7 +719,7 @@
         <span id="chipAvatar" class="chip-avatar"></span>
         <span id="chipName">LOGIN</span>
       </button>
-      <span class="text-[11px] tracking-[0.2em] uppercase t-ink text-center">Developed by IAB</span>
+      <span class="text-[11px] tracking-[0.2em] uppercase t-ink text-center">Developed by <button id="iabLink" type="button" class="iab-link" title="See more creations by IAB" aria-haspopup="dialog">IAB</button></span>
       <span></span>
     </footer>
 
@@ -783,6 +803,16 @@
         </div>
       </div>
       <button id="playerCloseBtn" type="button" class="retro-key retro-key-active w-full mt-5 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- CREATIONS OF IAB: opens when you click "IAB" in the footer. The app list is the APPS array in the script at the end of this page. -->
+  <div id="creationsModal" class="auth-modal hidden fixed inset-0 z-[55] flex items-center justify-center p-5 bg-black/80" role="dialog" aria-modal="true" aria-labelledby="creationsTitle">
+    <div class="max-w-sm w-full retro-chassis rounded-2xl p-6 text-center">
+      <h2 id="creationsTitle" class="text-xl mb-1 t-ink" style="text-shadow: 2px 2px 0 var(--cyan);">CREATIONS OF IAB</h2>
+      <p class="text-[10px] tracking-widest opacity-70 mb-5">MORE WEB APPS BY THE SAME DEVELOPER</p>
+      <ul id="creationsList" class="creations-list"></ul>
+      <button id="creationsCloseBtn" type="button" class="retro-key retro-key-active w-full mt-6 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
     </div>
   </div>
 
@@ -3376,6 +3406,76 @@
           }
         }, 2200);
       };
+    })();
+  </script>
+
+  <!-- ==================== CREATIONS OF IAB POPUP ====================
+       To add another app later: copy one line into APPS and drop its logo (PNG, ~96x96) next to index.html. -->
+  <script>
+    (function () {
+      'use strict';
+      const APPS = [
+        { name: 'DarkBeats',    url: 'https://darkbeatsbyiab.web.app/',            logo: 'logo-darkbeats.png' },
+        { name: 'Shutter Soul', url: 'https://shutter-soul.web.app/index.html',    logo: 'logo-shuttersoul.png' },
+        { name: 'BeatSense',    url: 'https://beatsense-by-iab.web.app/',          logo: 'logo-beatsense.png' }
+      ];
+
+      const modal = document.getElementById('creationsModal');
+      const list = document.getElementById('creationsList');
+      const openBtn = document.getElementById('iabLink');
+      const closeBtn = document.getElementById('creationsCloseBtn');
+      if (!modal || !list || !openBtn || !closeBtn) return;
+
+      // Each row is ONE link, so clicking the logo or the name opens the app in a new tab.
+      APPS.forEach((app) => {
+        const li = document.createElement('li');
+        const a = document.createElement('a');
+        a.className = 'creation-row retro-key c-white';
+        a.href = app.url;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.setAttribute('aria-label', 'Open ' + app.name + ' in a new tab');
+
+        const img = document.createElement('img');
+        img.className = 'creation-logo';
+        img.src = app.logo;
+        img.alt = '';
+        img.width = 52;
+        img.height = 52;
+        img.decoding = 'async';
+        img.draggable = false;
+
+        const name = document.createElement('span');
+        name.className = 'creation-name';
+        name.textContent = app.name;
+
+        const go = document.createElement('span');
+        go.className = 'creation-go';
+        go.setAttribute('aria-hidden', 'true');
+        go.textContent = '↗';
+
+        a.append(img, name, go);
+        li.appendChild(a);
+        list.appendChild(li);
+      });
+
+      function openCreations() {
+        // Same pause behaviour as the login / account popups
+        if (window.INchaseApp && window.INchaseApp.pauseIfPlaying) window.INchaseApp.pauseIfPlaying();
+        modal.classList.remove('hidden');
+        closeBtn.focus({ preventScroll: true });
+      }
+      function closeCreations() {
+        modal.classList.add('hidden');
+        openBtn.focus({ preventScroll: true });
+      }
+
+      openBtn.addEventListener('click', openCreations);
+      closeBtn.addEventListener('click', closeCreations);
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeCreations(); });
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Escape' && !modal.classList.contains('hidden')) { e.preventDefault(); closeCreations(); }
+      });
     })();
   </script>
 </body>
