@@ -3390,6 +3390,11 @@
       }
 
       function startNewRun() {
+        // Daily Run is ONE attempt: R / NEW RUN / Space can not restart it once it has begun
+        if (Game.mode === 'daily' && dailyStarted()) {
+          showToast('DAILY HAS ONE ATTEMPT. TRY ARCADE!');
+          return;
+        }
         if (Game.rafId) {
           cancelAnimationFrame(Game.rafId);
           Game.rafId = null;
@@ -3402,6 +3407,22 @@
 
         Game.state = 'playing';
         endSnap = null;
+        hideDailyUI();
+        if (Game.mode === 'daily') beginDailyRun(); else SEED.on = false;   // must come before the first spawn / green target
+
+        // New-best celebration: remember the score to beat (arcade and blitz each have their own best)
+        Game.pbTarget = 0;
+        if (Game.mode === 'arcade') Game.pbTarget = store.best;
+        else if (Game.mode === 'blitz') {
+          try { Game.pbTarget = Number(localStorage.getItem('inchase_blitz_best')) || 0; } catch (e) { /* ignore */ }
+        }
+        Game.pbDone = false;
+        Game.pbFreeze = 0;
+        Game.flashT = 0;
+        Game.pbT = 0;
+        Game.waveHit = false;
+        Game.gridStr = '';
+        UI.nearMsg.classList.add('hidden');
         Game.score = 0;
         prismLockT = 0;
         updateScoreUI();
@@ -3502,16 +3523,24 @@
           Game.rafId = null;
         }
         UI.pauseGameBtn.disabled = true;
+        Game.endTs = performance.now();
+        Game.pbT = 0;
+        Game.flashT = 0;
+        Game.pbFreeze = 0;
+        if (Game.mode === 'daily') { finishDailyRun(); return; }
+        hideDailyUI();
 
         const isBlitz = Game.mode === 'blitz';
         const isArcade = Game.mode === 'arcade';
         const bestKey = isBlitz ? 'inchase_blitz_best' : 'inchase_best_' + Game.mode;
         let isNewBest;
         let bestShown;
+        let prevBest = 0;
         if (!isArcade) {
           // Every non-arcade mode keeps its own local best so none mix into the arcade board
           let bb = 0;
           try { bb = Number(localStorage.getItem(bestKey)) || 0; } catch (e) {}
+          prevBest = bb;
           isNewBest = Game.score > bb;
           if (isNewBest) {
             bb = Game.score;
@@ -3520,6 +3549,7 @@
           bestShown = bb;
           store.total++;
         } else {
+          prevBest = store.best;
           isNewBest = Game.score > store.best;
           if (isNewBest) store.best = Game.score;
           store.runs.unshift({ score: Game.score, wave: Game.wave });
@@ -3536,7 +3566,25 @@
         UI.overlayBadge.textContent = 'GAME OVER';
         UI.overlayTitle.textContent = isBlitz ? 'BLITZ COMPLETE' : 'WAVE ' + Game.wave + ' REACHED';
         UI.overlayPrimaryBtn.textContent = 'PLAY AGAIN';
-        endSnap = { mode: Game.mode, title: UI.overlayTitle.textContent, showing: true, newBestHidden: !isNewBest, rivalHidden: true };
+
+        // Near-miss line: celebrate the gain, or show how close it was. Far-off runs get no message.
+        let nearText = '';
+        if (Game.score > 0) {
+          if (isNewBest && prevBest > 0) {
+            nearText = '+' + (Game.score - prevBest).toLocaleString() + ' OVER YOUR OLD BEST';
+          } else if (!isNewBest && bestShown > 0) {
+            const gap = bestShown - Game.score;
+            if (gap === 0) nearText = 'YOU TIED YOUR BEST!';
+            else if (gap <= bestShown * 0.1) nearText = 'SO CLOSE! ONLY ' + gap.toLocaleString() + ' SHORT OF YOUR BEST';
+            else if (Game.score >= bestShown * 0.6) nearText = gap.toLocaleString() + ' SHORT OF YOUR BEST';
+          }
+        }
+        UI.nearMsg.textContent = nearText;
+        UI.nearMsg.classList.toggle('hidden', !nearText);
+        // First-ever best has no live celebration (nothing to beat yet), so give the fanfare here
+        if (isNewBest && !Game.pbDone) setTimeout(() => Synth.playNewBest(), 250);
+
+        endSnap = { mode: Game.mode, title: UI.overlayTitle.textContent, showing: true, newBestHidden: !isNewBest, rivalHidden: true, nearHidden: !nearText, nearText };
         UI.rivalMsg.classList.add('hidden');
         if (isArcade && Game.score > 0) showRival(Game.score);
         UI.canvasOverlay.classList.remove('hidden');
@@ -3593,9 +3641,11 @@
       UI.pauseGameBtn.addEventListener('click', togglePause);
       UI.restartGameBtn.addEventListener('click', startNewRun);
 
-      UI.overlayPrimaryBtn.addEventListener('click', () => {
-        if (Game.state === 'paused') togglePause();
-        else startNewRun();
+      UI.overlayPrimaryBtn.addEventListener('click', primaryAction);
+      UI.dailyShareBtn.addEventListener('click', shareDaily);
+      UI.dailyRanksBtn.addEventListener('click', () => {
+        if (window.INchaseDaily) window.INchaseDaily.openRanks();
+        else showToast('RANKS NEED AN INTERNET CONNECTION.');
       });
 
       // Pointer & Mouse Button Handling on Canvas
@@ -3672,8 +3722,12 @@
         } else if (code === 'Space') {
           e.preventDefault();
           if (Game.state === 'playing') triggerPhaseDash();
-          else if (Game.state === 'idle' || Game.state === 'gameover') startNewRun();
+          else if (Game.state === 'idle' || Game.state === 'gameover') { if (!e.repeat && !tooSoonAfterEnd()) primaryAction(); }
           else if (Game.state === 'paused') togglePause();
+        } else if (code === 'Enter' || code === 'NumpadEnter') {
+          // Same as Space on the cards (start / play again / resume)
+          if (Game.state === 'idle' || Game.state === 'gameover') { e.preventDefault(); if (!e.repeat && !tooSoonAfterEnd()) primaryAction(); }
+          else if (Game.state === 'paused') { e.preventDefault(); togglePause(); }
         } else if (code === 'KeyE' || code === 'ShiftLeft' || code === 'ShiftRight') {
           if (Game.state === 'playing') triggerGhostDrive();
         } else if (code === 'KeyP' || code === 'Escape') {
@@ -3828,7 +3882,15 @@
           saveStore(false);
           renderMatchHistory();
         },
-        pauseIfPlaying: () => { if (Game.state === 'playing') togglePause(); }
+        pauseIfPlaying: () => { if (Game.state === 'playing') togglePause(); },
+        // Daily Run bridge for auth.js (ranks + cloud copy)
+        dayNum: () => dayNum(),
+        getDaily: () => getDailyRec(),
+        setDaily: (r) => { setDailyRec(r); },
+        markDailySubmitted: () => { const r = getDailyRec(); if (r) { r.submitted = true; setDailyRec(r); } },
+        dailyChanged: () => refreshDailyUI(),
+        dailyNumber: () => dailyNumber(),
+        dailyTimeLeft: () => dailyTimeLeft()
       };
 
       window.onload = function () {
@@ -3842,6 +3904,7 @@
         renderMatchHistory();
         updateScoreUI();
         updateHUD();
+        refreshDailyBadge();
         renderArena();
 
         // Fade out the retro "INchase / Developed by IAB" intro screen after 2.2 seconds
