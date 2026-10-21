@@ -530,6 +530,33 @@
     .creation-name { flex: 1 1 auto; min-width: 0; font-size: 16px; letter-spacing: 0.04em; line-height: 1.1; overflow-wrap: anywhere; }
     .creation-go { flex: 0 0 auto; font-size: 18px; line-height: 1; }
     .creation-row:focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; }
+    /* ---------- New-best pop, near-miss line, Daily Run card + ranks ---------- */
+    #canvasOverlay { overflow-y: auto; }        /* tall cards scroll instead of being cut off */
+    #canvasOverlay > div { margin: auto; }      /* ...and stay centred when they do fit */
+    #newBestTag:not(.hidden) { animation: pbPop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1) 1; }
+    @keyframes pbPop { 0% { transform: scale(0.4); opacity: 0; } 100% { transform: scale(1); opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { #newBestTag:not(.hidden) { animation: none; } .daily-dot { animation: none; } }
+    #nearMsg { white-space: normal; max-width: 100%; text-align: center; line-height: 1.35; }
+    .daily-dot {
+      display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #F97316;
+      margin-left: 6px; vertical-align: middle; box-shadow: 0 0 6px 1px rgba(249, 115, 22, 0.8);
+      animation: dailyPulse 1.6s ease-in-out infinite;
+    }
+    .daily-tick { margin-left: 5px; font-weight: 700; }
+    @keyframes dailyPulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+    .daily-grid { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; max-width: 236px; margin: 0 auto; }
+    .dsq { width: 20px; height: 20px; border: 2px solid var(--ink); border-radius: 4px; }
+    .dsq.g { background: #34D399; } .dsq.y { background: #FBBF24; } .dsq.r { background: #F43F5E; }
+    .daily-legend { display: flex; justify-content: center; gap: 12px; margin-top: 8px; font-size: 9px; letter-spacing: 0.08em; opacity: 0.8; }
+    .daily-legend i { display: inline-block; width: 9px; height: 9px; border: 2px solid var(--ink); border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+    #dailyModal { --lb-row: 44px; --lb-gap: 8px; }
+    #dailyList { flex: 0 1 auto; max-height: calc(var(--lb-row) * 5 + var(--lb-gap) * 4 + 16px); }
+    #dailyModal .lb-me { text-align: left; }
+    #dailyModal .lb-rank { height: calc(var(--lb-row) - 14px); font-size: 12px; }
+    #dailyModal .lb-av.chip-avatar { font-size: 13px; }
+    #dailyModal .lb-name { font-size: 14px; }
+    #dailyModal .lb-score { font-size: 13px; }
+    #dailyModal .lb-note { font-size: 11px; padding: 14px 2px; }
     @media (max-height: 770px) { #lbSide { --lb-row: 46px; --lb-gap: 7px; } }
     /* Short screens: give the list the room (the page never scrolls on desktop) */
     @media (max-height: 770px) {
@@ -600,6 +627,7 @@
       <div id="modeBar" class="flex flex-wrap items-center gap-1.5 mr-auto" role="group" aria-label="Game mode">
         <button type="button" data-mode="arcade" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">ARCADE</button>
         <button type="button" data-mode="blitz" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">BLITZ</button>
+        <button type="button" data-mode="daily" class="retro-key px-2.5 py-1.5 rounded-lg text-xs" title="Daily Run: one attempt a day, same challenge for everyone">DAILY<span id="dailyMark" class="daily-dot"></span></button>
       </div>
       <button id="audioToggleBtn" type="button" class="retro-key px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5" title="Toggle Synth Audio">
         <span id="audioDot" class="w-3 h-3 rounded-full border-2 border-black bg-emerald-400"></span>
@@ -633,19 +661,34 @@
 
               <div id="overlayStats" class="hidden grid grid-cols-2 gap-3 mt-4">
                 <div class="retro-bay c-white rounded-xl p-2.5">
-                  <div class="text-[10px] tracking-widest">YOUR SCORE</div>
+                  <div id="statFinalLabel" class="text-[10px] tracking-widest">YOUR SCORE</div>
                   <div id="statFinalScore" class="text-2xl tabular-nums mt-1">0</div>
                 </div>
                 <div class="retro-bay c-orange rounded-xl p-2.5">
-                  <div class="text-[10px] tracking-widest">HIGHEST</div>
+                  <div id="statBestLabel" class="text-[10px] tracking-widest">HIGHEST</div>
                   <div id="statBestScore" class="text-2xl tabular-nums mt-1">0</div>
                 </div>
               </div>
               <div id="newBestTag" class="hidden nb-pill c-lime mt-3 inline-block text-xs">NEW HIGH SCORE!</div>
+              <div id="nearMsg" class="hidden nb-pill c-orange mt-2 inline-block text-xs"></div>
               <div id="rivalMsg" class="hidden nb-pill c-cyan mt-2 inline-block text-xs"></div>
 
-              <div class="mt-5">
+              <!-- DAILY RUN extras: result card (wave grid, share, ranks) and the "next daily" countdown -->
+              <div id="dailyExtras" class="hidden mt-3">
+                <div id="dailyDoneBox" class="hidden">
+                  <div id="dailyGrid" class="daily-grid" role="img" aria-label="How each wave went"></div>
+                  <div class="daily-legend"><span><i style="background:#34D399"></i>CLEAN</span><span><i style="background:#FBBF24"></i>HIT</span><span><i style="background:#F43F5E"></i>OUT</span></div>
+                  <div class="grid grid-cols-2 gap-3 mt-3">
+                    <button id="dailyShareBtn" type="button" class="retro-key c-lime py-2 rounded-xl text-xs tracking-wide">SHARE</button>
+                    <button id="dailyRanksBtn" type="button" class="retro-key c-white py-2 rounded-xl text-xs tracking-wide">RANKS</button>
+                  </div>
+                </div>
+                <div id="dailyNext" class="text-[10px] tracking-widest opacity-70 mt-3"></div>
+              </div>
+
+              <div class="mt-4">
                 <button id="overlayPrimaryBtn" type="button" class="retro-key retro-key-active w-full py-3 px-6 rounded-xl text-sm tracking-wide">START</button>
+                <div class="desk-only text-[10px] tracking-widest opacity-60 mt-2">SPACE OR ENTER</div>
               </div>
             </div>
           </div>
@@ -813,6 +856,19 @@
       <p class="text-[10px] tracking-widest opacity-70 mb-5">MORE WEB APPS BY THE SAME DEVELOPER</p>
       <ul id="creationsList" class="creations-list"></ul>
       <button id="creationsCloseBtn" type="button" class="retro-key retro-key-active w-full mt-6 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- DAILY RANKS: today's Daily Run leaderboard (logic lives in auth.js, section 9) -->
+  <div id="dailyModal" class="auth-modal hidden fixed inset-0 z-[55] flex items-center justify-center p-5 bg-black/80" role="dialog" aria-modal="true" aria-labelledby="dailyTitle">
+    <div class="max-w-sm w-full retro-chassis rounded-2xl p-6 text-center">
+      <h2 id="dailyTitle" class="text-xl mb-1 t-ink" style="text-shadow: 2px 2px 0 var(--orange);">TODAY'S RANKS</h2>
+      <p id="dailySub" class="text-[10px] tracking-widest opacity-70 mb-4">DAILY RUN</p>
+      <div class="lb-pane">
+        <div id="dailyList" class="lb-list" role="list"></div>
+        <div id="dailyMe" class="lb-me lb-off"></div>
+      </div>
+      <button id="dailyCloseBtn" type="button" class="retro-key retro-key-active w-full mt-5 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
     </div>
   </div>
 
@@ -1021,8 +1077,48 @@
 
         playShieldRestore() {
           this.tone(520, 'triangle', 0.32, 0.1, 1040);
+        },
+
+        // New personal best: a short rising C-major run that ends on a bright held note
+        playNewBest() {
+          [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => {
+            setTimeout(() => this.tone(f, 'triangle', 0.24, 0.13, f * 1.02), i * 80);
+          });
+          setTimeout(() => this.tone(1568, 'sine', 0.55, 0.09), 330);
         }
       };
+
+      /* =========================================================================
+       * 2b. SEEDED RANDOM (Daily Run only)
+       *     Every Daily spawn (where it appears, what it is, how fast) and every green
+       *     target comes from a generator seeded by the day number + the spawn's own
+       *     index. So spawn #7 is the same for everybody that day, no matter how each
+       *     player moves. Arcade and Blitz keep using Math.random exactly as before.
+       * ========================================================================= */
+      function mulberry32(a) {
+        return function () {
+          a = (a + 0x6D2B79F5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      function mixSeed(a, b, c) {
+        let h = (2166136261 ^ a) >>> 0;
+        h = Math.imul(h ^ b, 16777619);
+        h = Math.imul(h ^ c, 16777619);
+        h ^= h >>> 13;
+        h = Math.imul(h, 0x5bd1e995);
+        h ^= h >>> 15;
+        return h >>> 0;
+      }
+      const SEED = { on: false, day: 0, spawnQ: 0, spawnH: 0, prism: 0 };
+      // kind: 1 = spawn warning position, 2 = hazard type/speed/life, 3 = green target
+      function streamRng(kind) {
+        if (!SEED.on) return Math.random;
+        const idx = kind === 1 ? SEED.spawnQ++ : (kind === 2 ? SEED.spawnH++ : SEED.prism++);
+        return mulberry32(mixSeed(SEED.day * 7919 + 12345, kind, idx));
+      }
 
       /* =========================================================================
        * 3. O(1) PRE-ALLOCATED TYPED-ARRAY OBJECT POOLS
@@ -1573,7 +1669,17 @@
         shakeTime: 0,
         shakeMag: 0,
         rafId: null,
-        lastFrameTs: 0
+        lastFrameTs: 0,
+        // New-best celebration (see celebrateBest)
+        pbTarget: 0,    // the best score to beat in this run (0 = nothing to celebrate yet)
+        pbDone: false,
+        pbFreeze: 0,    // seconds the action stays frozen
+        flashT: 0,      // seconds left of the gold flash
+        pbT: 0,         // seconds left of the NEW BEST banner
+        // Daily Run: how each wave went (G clean, Y lost a shield, R out)
+        waveHit: false,
+        gridStr: '',
+        endTs: 0
       };
 
       const Player = {
@@ -1657,6 +1763,16 @@
         statBestScore: document.getElementById('statBestScore'),
         newBestTag: document.getElementById('newBestTag'),
         rivalMsg: document.getElementById('rivalMsg'),
+        nearMsg: document.getElementById('nearMsg'),
+        statFinalLabel: document.getElementById('statFinalLabel'),
+        statBestLabel: document.getElementById('statBestLabel'),
+        dailyExtras: document.getElementById('dailyExtras'),
+        dailyDoneBox: document.getElementById('dailyDoneBox'),
+        dailyGrid: document.getElementById('dailyGrid'),
+        dailyNext: document.getElementById('dailyNext'),
+        dailyShareBtn: document.getElementById('dailyShareBtn'),
+        dailyRanksBtn: document.getElementById('dailyRanksBtn'),
+        dailyMark: document.getElementById('dailyMark'),
         bestBtn: document.getElementById('bestBtn'),
         bestModal: document.getElementById('bestModal'),
         bestCloseBtn: document.getElementById('bestCloseBtn'),
@@ -1730,6 +1846,19 @@
         Game.score += delta;
         updateScoreUI();
         flashScoreDelta(delta);
+        if (Game.pbTarget > 0 && !Game.pbDone && Game.score > Game.pbTarget) celebrateBest();
+      }
+
+      // The moment you pass your own best: a short freeze, a soft gold flash, a fanfare and a banner.
+      // Once per run, and only when there was a real best to beat.
+      function celebrateBest() {
+        Game.pbDone = true;
+        Game.pbFreeze = 0.32;
+        Game.flashT = 0.55;
+        Game.pbT = 1.7;
+        Synth.playNewBest();
+        spawnShockwave(Player.x, Player.y, 210, 3);
+        emitBurst(Player.x, Player.y, 30, 300, 3);
       }
 
       // Ghost Drive charge. Tune these: a full bar is 100.
@@ -1762,25 +1891,47 @@
           b.style.opacity = free || b.dataset.mode === Game.mode ? '' : '0.45';
         });
       }
+      // One place that changes the mode: the buttons above the arena and the "PLAY ARCADE" shortcut both use it
+      function setMode(next) {
+        const prevMode = Game.mode;
+        Game.mode = next;
+        updateHUD();
+        if (Game.mode !== prevMode) {
+          if (Game.state === 'gameover' && endSnap) syncGameOverOverlay();
+          else if (Game.state === 'idle') syncIdleOverlay();
+        }
+        if (Game.mode === 'blitz' && prevMode !== 'blitz') maybeShowBlitzNotice();
+      }
       document.getElementById('modeBar').addEventListener('click', (e) => {
         const b = e.target.closest('[data-mode]');
         if (!b || b.disabled) return;
-        const prevMode = Game.mode;
-        Game.mode = b.dataset.mode;
-        updateHUD();
-        if (Game.state === 'gameover' && endSnap && Game.mode !== prevMode) syncGameOverOverlay();
-        if (Game.mode === 'blitz' && prevMode !== 'blitz') maybeShowBlitzNotice();
+        setMode(b.dataset.mode);
       });
+
+      // The very first card (before any run) follows the picked mode
+      function syncIdleOverlay() {
+        UI.nearMsg.classList.add('hidden');
+        if (Game.mode === 'daily') { showDailyCard(); return; }
+        hideDailyUI();
+        UI.overlayBadge.textContent = 'READY';
+        UI.overlayTitle.textContent = 'INchase';
+        UI.overlayPrimaryBtn.textContent = 'START';
+        UI.overlayStats.classList.add('hidden');
+      }
 
       // After a match, picking another mode turns the game-over card into a ready card for that mode (button: PLAY)
       function syncGameOverOverlay() {
         if (Game.mode === endSnap.mode) {
+          if (Game.mode === 'daily') { showDailyCard(); endSnap.showing = true; return; }
           // Back to the mode that just finished: show its result again
+          hideDailyUI();
           UI.overlayBadge.textContent = 'GAME OVER';
           UI.overlayTitle.textContent = endSnap.title;
           UI.overlayPrimaryBtn.textContent = 'PLAY AGAIN';
           UI.overlayStats.classList.remove('hidden');
           UI.newBestTag.classList.toggle('hidden', endSnap.newBestHidden);
+          UI.nearMsg.textContent = endSnap.nearText || '';
+          UI.nearMsg.classList.toggle('hidden', endSnap.nearHidden !== false);
           UI.rivalMsg.classList.toggle('hidden', endSnap.rivalHidden);
           endSnap.showing = true;
           return;
@@ -1788,16 +1939,258 @@
         if (endSnap.showing) {
           endSnap.newBestHidden = UI.newBestTag.classList.contains('hidden');
           endSnap.rivalHidden = UI.rivalMsg.classList.contains('hidden');
+          endSnap.nearHidden = UI.nearMsg.classList.contains('hidden');
+          endSnap.nearText = UI.nearMsg.textContent;
           endSnap.showing = false;
         }
         rivalSeq++; // drop a pending "beat #name" lookup
+        if (Game.mode === 'daily') { showDailyCard(); return; }
+        hideDailyUI();
         UI.overlayBadge.textContent = 'READY';
         UI.overlayTitle.textContent = Game.mode === 'blitz' ? 'BLITZ MODE' : 'ARCADE MODE';
         UI.overlayPrimaryBtn.textContent = 'PLAY';
         UI.overlayStats.classList.add('hidden');
         UI.newBestTag.classList.add('hidden');
+        UI.nearMsg.classList.add('hidden');
         UI.rivalMsg.classList.add('hidden');
       }
+
+      /* =========================================================================
+       * 5b. DAILY RUN
+       *     One attempt per UTC day. Everyone gets the same seeded spawns (see 2b).
+       *     The local record below decides whether today's attempt is used; auth.js
+       *     adds the daily ranks and carries the result to the player's other devices.
+       *     Waves are graded for the share card: G clean, Y lost a shield, R out.
+       * ========================================================================= */
+      const DAILY_KEY = 'inchase_daily_v1';
+      const DAILY_EPOCH = Math.floor(Date.UTC(2026, 9, 21) / 86400000);   // Daily #1 = 21 Oct 2026
+      const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+      let dailyRec = null;       // { day, started, done, score, wave, grid, submitted }
+      let dailyRankSeq = 0;      // drops a late "rank" answer once the card has changed
+      try {
+        const raw = localStorage.getItem(DAILY_KEY);
+        const p = raw ? JSON.parse(raw) : null;
+        if (p && typeof p === 'object' && Number.isFinite(p.day)) dailyRec = p;
+      } catch (err) { dailyRec = null; }
+
+      function dayNum() { return Math.floor(Date.now() / 86400000); }
+      function dailyNumber() { return Math.max(1, dayNum() - DAILY_EPOCH + 1); }
+      function getDailyRec() { return dailyRec && dailyRec.day === dayNum() ? dailyRec : null; }
+      function setDailyRec(r) {
+        dailyRec = r;
+        try { localStorage.setItem(DAILY_KEY, JSON.stringify(r)); } catch (err) { /* ignore */ }
+      }
+      function dailyStarted() { const r = getDailyRec(); return !!(r && r.started); }
+
+      let toastTimer = null;
+      function showToast(msg) {
+        const t = document.getElementById('toast');
+        if (!t) return;
+        t.textContent = msg;
+        t.classList.remove('hidden');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => t.classList.add('hidden'), 3200);
+      }
+
+      function dailyTimeLeft() {
+        const s = Math.max(0, Math.floor(((dayNum() + 1) * 86400000 - Date.now()) / 1000));
+        const p = (n) => String(n).padStart(2, '0');
+        return p(Math.floor(s / 3600)) + ':' + p(Math.floor((s % 3600) / 60)) + ':' + p(s % 60);
+      }
+      function updateDailyNext() { UI.dailyNext.textContent = 'NEXT DAILY IN ' + dailyTimeLeft(); }
+
+      // Orange dot on the DAILY button while today's attempt is still waiting; a tick once it is used
+      function refreshDailyBadge() {
+        const used = dailyStarted();
+        UI.dailyMark.className = used ? 'daily-tick' : 'daily-dot';
+        UI.dailyMark.textContent = used ? '✓' : '';
+      }
+
+      // Back to the normal (non-daily) card
+      function hideDailyUI() {
+        dailyRankSeq++;
+        UI.dailyExtras.classList.add('hidden');
+        UI.dailyDoneBox.classList.add('hidden');
+        UI.overlaySubtitle.classList.add('hidden');
+        UI.overlaySubtitle.textContent = '';
+        UI.statFinalLabel.textContent = 'YOUR SCORE';
+        UI.statBestLabel.textContent = 'HIGHEST';
+      }
+
+      function showDailyIntro() {
+        dailyRankSeq++;
+        UI.overlayBadge.textContent = 'DAILY #' + dailyNumber();
+        UI.overlayTitle.textContent = 'DAILY RUN';
+        UI.overlaySubtitle.className = 'mt-3 text-[11px] leading-relaxed';
+        UI.overlaySubtitle.textContent = 'SAME CHALLENGE FOR EVERYONE. ONE ATTEMPT A DAY. LEAVING MID-RUN USES IT UP.';
+        UI.overlayStats.classList.add('hidden');
+        UI.newBestTag.classList.add('hidden');
+        UI.nearMsg.classList.add('hidden');
+        UI.rivalMsg.classList.add('hidden');
+        UI.dailyDoneBox.classList.add('hidden');
+        UI.dailyExtras.classList.remove('hidden');
+        UI.overlayPrimaryBtn.textContent = 'START';
+        updateDailyNext();
+      }
+
+      function renderDailyGrid(grid) {
+        UI.dailyGrid.textContent = '';
+        const shown = grid.slice(0, 40);
+        for (let i = 0; i < shown.length; i++) {
+          const sq = document.createElement('span');
+          const c = shown[i];
+          sq.className = 'dsq ' + (c === 'G' ? 'g' : (c === 'Y' ? 'y' : 'r'));
+          UI.dailyGrid.appendChild(sq);
+        }
+        if (grid.length > 40) {
+          const more = document.createElement('span');
+          more.className = 'text-[10px] self-center';
+          more.textContent = '+' + (grid.length - 40);
+          UI.dailyGrid.appendChild(more);
+        }
+      }
+
+      // The one line under the daily result: login hint, or "RANK #n TODAY" once the score is posted
+      function setDailyNote(r) {
+        const seq = ++dailyRankSeq;
+        const note = (txt) => {
+          if (seq !== dailyRankSeq) return;
+          UI.nearMsg.textContent = txt;
+          UI.nearMsg.classList.toggle('hidden', !txt);
+        };
+        const cloud = window.INchaseDaily;
+        if (!r.done || !cloud) { note(''); return; }
+        if (!cloud.isLoggedIn()) { note("LOGIN TO JOIN TODAY'S RANKS"); return; }
+        note(r.submitted ? '' : 'POSTING YOUR SCORE...');
+        cloud.status().then((s) => {
+          if (s.state === 'ranked') note(s.rank ? 'RANK #' + s.rank + ' TODAY' : "POSTED TO TODAY'S RANKS");
+          else if (s.state === 'failed') note('COULD NOT REACH THE RANKS. WILL RETRY.');
+          else note('');
+        }).catch(() => note(''));
+      }
+
+      function showDailyDone(rec) {
+        const r = rec || getDailyRec();
+        if (!r) { showDailyIntro(); return; }
+        UI.overlayBadge.textContent = 'DAILY #' + Math.max(1, r.day - DAILY_EPOCH + 1);
+        UI.overlayTitle.textContent = 'DAILY COMPLETE';
+        UI.overlaySubtitle.classList.add('hidden');
+        UI.statFinalLabel.textContent = 'YOUR SCORE';
+        UI.statFinalScore.textContent = (Number(r.score) || 0).toLocaleString();
+        UI.statBestLabel.textContent = 'WAVE';
+        UI.statBestScore.textContent = String(Number(r.wave) || 1);
+        UI.overlayStats.classList.remove('hidden');
+        UI.newBestTag.classList.add('hidden');
+        UI.rivalMsg.classList.add('hidden');
+        renderDailyGrid(r.grid || 'R');
+        UI.dailyDoneBox.classList.remove('hidden');
+        UI.dailyExtras.classList.remove('hidden');
+        UI.overlayPrimaryBtn.textContent = 'PLAY ARCADE';
+        updateDailyNext();
+        setDailyNote(r);
+      }
+
+      // Today's card: the rules before the attempt, the result after it
+      function showDailyCard() {
+        const r = getDailyRec();
+        if (r && r.started) showDailyDone(r); else showDailyIntro();
+      }
+
+      function refreshDailyUI() {
+        refreshDailyBadge();
+        if (Game.mode === 'daily' && (Game.state === 'idle' || Game.state === 'gameover')) showDailyCard();
+      }
+
+      function beginDailyRun() {
+        const day = dayNum();
+        SEED.on = true;
+        SEED.day = day;
+        SEED.spawnQ = 0;
+        SEED.spawnH = 0;
+        SEED.prism = 0;
+        setDailyRec({ day, started: true, done: false, score: 0, wave: 1, grid: '', submitted: false });
+        refreshDailyBadge();
+      }
+
+      function finishDailyRun() {
+        Game.gridStr += 'R';   // the wave you went out in
+        const rec = dailyRec && dailyRec.started ? dailyRec : { day: dayNum(), started: true };
+        rec.done = true;
+        rec.score = Game.score;
+        rec.wave = Game.wave;
+        rec.grid = Game.gridStr.slice(0, 60);
+        rec.submitted = false;
+        setDailyRec(rec);
+        SEED.on = false;
+        refreshDailyBadge();
+        endSnap = { mode: 'daily', title: 'DAILY COMPLETE', showing: true, newBestHidden: true, rivalHidden: true, nearHidden: true, nearText: '' };
+        showDailyDone(rec);
+        UI.canvasOverlay.classList.remove('hidden');
+        updateHUD();
+        renderArena();
+      }
+
+      // Share card as text (Wordle style). Phones open the share sheet, computers copy it.
+      function dailyShareText(r) {
+        const map = { G: '🟩', Y: '🟨', R: '🟥' };
+        const g = (r.grid || 'R').slice(0, 40);
+        const rows = [];
+        for (let i = 0; i < g.length; i += 10) {
+          rows.push(g.slice(i, i + 10).split('').map((c) => map[c] || map.R).join(''));
+        }
+        const d = new Date(r.day * 86400000);
+        return 'INchase Daily #' + Math.max(1, r.day - DAILY_EPOCH + 1) + ' · ' + d.getUTCDate() + ' ' + MONTHS[d.getUTCMonth()] + '\n' +
+          (Number(r.score) || 0).toLocaleString('en-US') + ' pts · Wave ' + (Number(r.wave) || 1) + '\n' +
+          rows.join('\n') + '\n' + location.origin + '/';
+      }
+      function legacyCopy(text) {
+        try {
+          const ta = document.createElement('textarea');
+          ta.value = text;
+          ta.setAttribute('readonly', '');
+          ta.style.position = 'fixed';
+          ta.style.opacity = '0';
+          document.body.appendChild(ta);
+          ta.select();
+          const ok = document.execCommand('copy');
+          document.body.removeChild(ta);
+          return ok;
+        } catch (err) { return false; }
+      }
+      function copyText(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          return navigator.clipboard.writeText(text).then(() => true, () => legacyCopy(text));
+        }
+        return Promise.resolve(legacyCopy(text));
+      }
+      function shareDaily() {
+        const r = getDailyRec();
+        if (!r || !r.started) return;
+        const text = dailyShareText(r);
+        if (navigator.share && document.documentElement.classList.contains('mob')) {
+          navigator.share({ text }).catch(() => { /* closing the share sheet is not an error */ });
+          return;
+        }
+        copyText(text).then((ok) => showToast(ok ? 'COPIED! PASTE IT ANYWHERE.' : 'COULD NOT COPY. SORRY.'));
+      }
+
+      // The big button on the card. After today's daily is used it moves on to Arcade.
+      function primaryAction() {
+        if (Game.state === 'paused') { togglePause(); return; }
+        if (Game.state === 'playing') return;
+        if (Game.mode === 'daily' && dailyStarted()) { setMode('arcade'); startNewRun(); return; }
+        startNewRun();
+      }
+
+      // Keyboard "start" right after dying is ignored for a moment so a dash-mash does not skip the result
+      function tooSoonAfterEnd() { return Game.state === 'gameover' && performance.now() - Game.endTs < 350; }
+
+      // New day while the page is open: refresh the badge and the card. Also ticks the countdown.
+      let shownDay = dayNum();
+      setInterval(() => {
+        if (dayNum() !== shownDay) { shownDay = dayNum(); refreshDailyUI(); return; }
+        if (Game.mode === 'daily' && !UI.dailyExtras.classList.contains('hidden')) updateDailyNext();
+      }, 1000);
 
       // One-time notice (per device) the first time someone switches to Blitz
       const BLITZ_NOTICE_KEY = 'inchase_blitz_notice_seen';
@@ -1857,6 +2250,7 @@
        * 7. SPAWNING & GAMEPLAY MECHANICS
        * ========================================================================= */
       function relocatePrism() {
+        const rng = streamRng(3);
         // Margin shrinks on very short arenas so there is always room to place the target
         const margin = Math.max(Prism.radius + 8, Math.min(48, arenaW * 0.25, arenaH * 0.25));
         const spanX = Math.max(0, arenaW - margin * 2);
@@ -1868,8 +2262,8 @@
         for (let r = 0; r < rounds.length; r++) {
           const need = Math.max(rounds[r], minPick);
           for (let attempt = 0; attempt < 24; attempt++) {
-            const nx = margin + Math.random() * spanX;
-            const ny = margin + Math.random() * spanY;
+            const nx = margin + rng() * spanX;
+            const ny = margin + rng() * spanY;
             const dx = nx - Player.x;
             const dy = ny - Player.y;
             if (dx * dx + dy * dy <= need * need) continue;
@@ -1891,7 +2285,7 @@
         // Last resort: the spot (corners + random samples) farthest from the player, never the centre
         let bx = margin, by = margin, bd = -1;
         const cands = [[margin, margin], [arenaW - margin, margin], [margin, arenaH - margin], [arenaW - margin, arenaH - margin]];
-        for (let k = 0; k < 16; k++) cands.push([margin + Math.random() * spanX, margin + Math.random() * spanY]);
+        for (let k = 0; k < 16; k++) cands.push([margin + rng() * spanX, margin + rng() * spanY]);
         for (let k = 0; k < cands.length; k++) {
           const d = Math.hypot(cands[k][0] - Player.x, cands[k][1] - Player.y);
           if (d > bd) { bd = d; bx = cands[k][0]; by = cands[k][1]; }
@@ -1911,14 +2305,15 @@
       // Pick a random border point at least 200px from the player and show a warning there
       function queueSpawn(boss) {
         if (pendCount >= MAX_PEND) return;
+        const rng = streamRng(1);
         let bx = 20, by = 20, bestD = -1;
         for (let t = 0; t < 14; t++) {
           let x, y;
-          const edge = (Math.random() * 4) | 0;
-          if (edge === 0) { x = Math.random() * arenaW; y = 20; }
-          else if (edge === 1) { x = arenaW - 20; y = Math.random() * arenaH; }
-          else if (edge === 2) { x = Math.random() * arenaW; y = arenaH - 20; }
-          else { x = 20; y = Math.random() * arenaH; }
+          const edge = (rng() * 4) | 0;
+          if (edge === 0) { x = rng() * arenaW; y = 20; }
+          else if (edge === 1) { x = arenaW - 20; y = rng() * arenaH; }
+          else if (edge === 2) { x = rng() * arenaW; y = arenaH - 20; }
+          else { x = 20; y = rng() * arenaH; }
           const d = Math.hypot(x - Player.x, y - Player.y);
           if (d > bestD) { bestD = d; bx = x; by = y; }
           if (d >= 200) break;
@@ -1965,8 +2360,8 @@
           Prism.vy = 0;
         }
       }
-      function pickType(mix) {
-        const roll = Math.random();
+      function pickType(mix, rng) {
+        const roll = (rng || Math.random)();
         let acc = 0;
         for (let k = 0; k < mix.length; k++) {
           acc += mix[k][1];
@@ -1977,7 +2372,8 @@
 
       function spawnHazardAt(sx, sy, boss) {
         if (entCount >= MAX_ENTITIES - 8) return;
-        const angle = Math.random() * Math.PI * 2;
+        const rng = streamRng(2);
+        const angle = rng() * Math.PI * 2;
         if (boss) {
           // Boss: one big, slow spiked core
           const bid = spawnEntity(2, sx, sy, Math.cos(angle) * 45, Math.sin(angle) * 45, 24);
@@ -1985,7 +2381,7 @@
           return;
         }
         const tw = Game.twist || TWISTS[0];
-        const type = pickType(tw.mix);
+        const type = pickType(tw.mix, rng);
         const w = Game.wave;
         let r;
         let spd;
@@ -1993,12 +2389,18 @@
         else if (type === 1) { r = 11; spd = 85 + Math.min(w * 7, 80); }
         else if (type === 2) { r = 13; spd = 60; }
         else if (type === 4) { r = 10; spd = 105 + Math.min(w * 6, 70); }
-        else if (type === 5) { r = 19 + Math.random() * 8; spd = 38; }
-        else { r = 6 + Math.random() * 2.5; spd = 200 + Math.min(w * 6, 60); }
-        if (Game.mode === 'blitz' && (type === 0 || type === 1 || type === 4)) r *= 0.85 + Math.random() * 0.35;  // size variety
+        else if (type === 5) { r = 19 + rng() * 8; spd = 38; }
+        else { r = 6 + rng() * 2.5; spd = 200 + Math.min(w * 6, 60); }
+        if (Game.mode === 'blitz' && (type === 0 || type === 1 || type === 4)) r *= 0.85 + rng() * 0.35;  // size variety
         spd *= tw.spd;
         const id = spawnEntity(type, sx, sy, Math.cos(angle) * spd, Math.sin(angle) * spd, r);
-        if (id >= 0) entLife[id] = HAZARD_LIFE_MIN + Math.random() * HAZARD_LIFE_VAR;
+        if (id >= 0) {
+          entLife[id] = HAZARD_LIFE_MIN + rng() * HAZARD_LIFE_VAR;
+          if (SEED.on) {   // Daily: the spin phase (it sets the silhouette angle) is seeded too
+            entPhase[id] = rng() * 6.28318;
+            entPAng[id] = hazardAngle(id);
+          }
+        }
       }
 
       function triggerPhaseDash() {
@@ -2122,6 +2524,8 @@
       }
 
       function stepSimulation(dt) {
+        // New-best freeze (timer runs down in loop())
+        if (Game.pbFreeze > 0) return;
         // Hit-stop: a very short freeze on shield loss or 3+ shatters
         if (Game.hitStop > 0) { Game.hitStop -= dt; return; }
         if (Game.mode === 'blitz') {
@@ -2162,6 +2566,8 @@
           Game.calmTimer -= dt;
           if (Game.calmTimer <= 0) {
             Game.calmTimer = 0;
+            if (Game.mode === 'daily') Game.gridStr += Game.waveHit ? 'Y' : 'G';   // how the wave that just ended went
+            Game.waveHit = false;
             Game.wave++;
             startWave(Game.wave);
             Game.spawnGap = 0.3;
@@ -2491,6 +2897,7 @@
             } else if (Game.shields > 0) {
               Game.hitStop = 0.045;
               Game.shields--;
+              Game.waveHit = true;
               Game.multiplier = Math.max(1, Game.multiplier >> 1);
             } else {
               endGame('CORE DESTABILIZED');
@@ -2924,6 +3331,39 @@
           ctx.restore();
         }
 
+        // New-best celebration: one soft gold flash (kept gentle on purpose) + the banner
+        if (Game.flashT > 0 && Game.state === 'playing') {
+          ctx.save();
+          ctx.globalAlpha = 0.3 * Math.min(1, Game.flashT / 0.55);
+          ctx.fillStyle = '#FDE68A';
+          ctx.fillRect(-20, -20, arenaW + 40, arenaH + 40);
+          ctx.restore();
+        }
+        if (Game.pbT > 0 && Game.state === 'playing') {
+          const age = 1.7 - Game.pbT;
+          const pop = age < 0.22 ? 1.35 - (age / 0.22) * 0.35 : 1;   // lands with a little pop
+          const y = Math.max(34, arenaH * 0.17);
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, Math.min(1, Game.pbT / 0.5));
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.translate(arenaW / 2, y);
+          ctx.scale(pop, pop);
+          ctx.font = 'bold 34px sans-serif';
+          ctx.lineWidth = 6;
+          ctx.lineJoin = 'round';
+          ctx.strokeStyle = '#0A0A0A';
+          ctx.strokeText('NEW BEST!', 0, 0);
+          ctx.fillStyle = '#FBBF24';
+          ctx.fillText('NEW BEST!', 0, 0);
+          ctx.font = 'bold 12px sans-serif';
+          ctx.lineWidth = 4;
+          ctx.strokeText('PREVIOUS ' + Game.pbTarget.toLocaleString(), 0, 24);
+          ctx.fillStyle = '#F8FAFC';
+          ctx.fillText('PREVIOUS ' + Game.pbTarget.toLocaleString(), 0, 24);
+          ctx.restore();
+        }
+
         ctx.restore();
       }
 
@@ -2935,6 +3375,11 @@
         if (!Game.lastFrameTs) Game.lastFrameTs = ts;
         const dt = Math.min(0.05, (ts - Game.lastFrameTs) / 1000);
         Game.lastFrameTs = ts;
+
+        // Celebration timers run on real time so the freeze always ends
+        if (Game.pbFreeze > 0) Game.pbFreeze -= dt;
+        if (Game.flashT > 0) Game.flashT -= dt;
+        if (Game.pbT > 0) Game.pbT -= dt;
 
         stepSimulation(dt);
         renderArena();
