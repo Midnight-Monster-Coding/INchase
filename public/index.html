@@ -618,6 +618,8 @@
       html:not(.mob) #board.has-tabs #hudScore { font-size: 34px; }
     }
   </style>
+  <!-- Adaptive performance engine: must load before the game script -->
+  <script src="inchase-perf.js"></script>
   <script>
     // Register the service worker (needed for the PWA install prompt + offline start)
     if ('serviceWorker' in navigator) {
@@ -1569,7 +1571,7 @@
       let partCount = 0;
 
       function spawnParticle(x, y, vx, vy, life, size, colorId) {
-        if (partCount >= MAX_PARTICLES) return;
+        if (partCount >= (window.INchasePerf ? window.INchasePerf.particleLimit : MAX_PARTICLES)) return;
         const i = partCount++;
         partX[i] = x;
         partY[i] = y;
@@ -2260,22 +2262,34 @@
       })();
 
       function updateHUD() {
+        // Only touch the DOM when a value actually changed (this runs every frame)
+        const c = updateHUD.last || (updateHUD.last = {});
+        let barW, barT, surgeOff;
         if (Game.overdriveTimer > 0) {
-          const odPct = (Game.overdriveTimer / 6.0) * 100;
-          UI.hudOverdriveBar.style.width = odPct.toFixed(1) + '%';
-          UI.hudOverdriveText.textContent = Game.overdriveTimer.toFixed(1) + 's';
-          UI.touchSurgeBtn.disabled = true;
+          barW = ((Game.overdriveTimer / 6.0) * 100).toFixed(1) + '%';
+          barT = Game.overdriveTimer.toFixed(1) + 's';
+          surgeOff = true;
         } else {
-          UI.hudOverdriveBar.style.width = Game.overdriveCharge.toFixed(1) + '%';
-          UI.hudOverdriveText.textContent = Math.floor(Game.overdriveCharge) + '%';
-          UI.touchSurgeBtn.disabled = !(Game.state === 'playing' && Game.overdriveCharge >= 100);
+          barW = Game.overdriveCharge.toFixed(1) + '%';
+          barT = Math.floor(Game.overdriveCharge) + '%';
+          surgeOff = !(Game.state === 'playing' && Game.overdriveCharge >= 100);
         }
+        if (c.barW !== barW) { c.barW = barW; UI.hudOverdriveBar.style.width = barW; }
+        if (c.barT !== barT) { c.barT = barT; UI.hudOverdriveText.textContent = barT; }
+        if (c.surgeOff !== surgeOff) { c.surgeOff = surgeOff; UI.touchSurgeBtn.disabled = surgeOff; }
 
         const waveLabel = Game.mode === 'blitz' ? 'TIME ' + Math.ceil(Game.blitzTimeLeft) : 'WAVE ' + Game.wave;
-        UI.hudWaveOrTime.textContent = waveLabel;
-        UI.hudShieldCount.textContent = 'SHIELDS: ' + Game.shields;
-        UI.hudWaveM.textContent = waveLabel;
-        UI.hudShieldM.textContent = 'SHIELDS: ' + Game.shields;
+        const shieldLabel = 'SHIELDS: ' + Game.shields;
+        if (c.wave !== waveLabel) {
+          c.wave = waveLabel;
+          UI.hudWaveOrTime.textContent = waveLabel;
+          UI.hudWaveM.textContent = waveLabel;
+        }
+        if (c.shield !== shieldLabel) {
+          c.shield = shieldLabel;
+          UI.hudShieldCount.textContent = shieldLabel;
+          UI.hudShieldM.textContent = shieldLabel;
+        }
         syncModeBar();
       }
 
@@ -3289,16 +3303,16 @@
           ctx.restore();
         }
 
-        // 6. Particles
+        // 6. Particles (one save/restore around the whole loop instead of one per particle)
+        ctx.save();
         for (let i = 0; i < partCount; i++) {
-          ctx.save();
           ctx.fillStyle = COLORS[partColorId[i]];
           ctx.globalAlpha = Math.max(0, partLife[i] / partMaxLife[i]);
           ctx.beginPath();
           ctx.arc(partX[i], partY[i], partSize[i], 0, Math.PI * 2);
           ctx.fill();
-          ctx.restore();
         }
+        ctx.restore();
 
         // 7. Player Vector Core
         ctx.save();

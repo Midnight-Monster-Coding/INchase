@@ -5,14 +5,15 @@
    - Everything else (Firebase auth, Firestore, Google APIs, POST requests) is never touched
    Bump CACHE_VERSION to force every device to drop old caches. */
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';
 const CACHE = 'inchase-' + CACHE_VERSION;
 
 const PRECACHE = [
   '/',
   '/manifest.json',
   '/favicon.png',
-  '/apple-touch-icon.png'
+  '/apple-touch-icon.png',
+  '/inchase-perf.js'
 ];
 
 const CDN_HOSTS = [
