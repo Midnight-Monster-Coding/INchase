@@ -5,7 +5,7 @@
    - Everything else (Firebase auth, Firestore, Google APIs, POST requests) is never touched
    Bump CACHE_VERSION to force every device to drop old caches. */
 
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v4';
 const CACHE = 'inchase-' + CACHE_VERSION;
 
 const PRECACHE = [
@@ -78,6 +78,19 @@ self.addEventListener('fetch', (event) => {
 
   // Never cache the service worker itself
   if (sameOrigin && url.pathname === '/sw.js') return;
+
+  // Your own scripts: network first, so a new auth.js is used on the very next load (not the one after)
+  if (sameOrigin && url.pathname.endsWith('.js')) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+          return res;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
 
   if (sameOrigin || CDN_HOSTS.includes(url.hostname)) {
     event.respondWith(staleWhileRevalidate(req));

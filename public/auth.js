@@ -1095,6 +1095,7 @@ const Dly = {
   state: 'idle',                     // my score for today: 'idle' | 'posting' | 'ranked' | 'failed'
   day: null,                         // day number that state belongs to
   rank: null,                        // my rank today
+  err: '',                           // last Firebase error code for the post (shown on the result card)
   rankAt: 0,                         // when that rank was read
   busy: null,                        // in-flight submit promise
   rows: [], loading: false, error: false, slow: false,
@@ -1120,6 +1121,7 @@ function submitDaily() {
   const uid = currentUser.uid;
   Dly.day = day;
   Dly.state = 'posting';
+  Dly.err = '';
   Dly.busy = (async () => {
     try {
       const ref = dailyRef(day, uid);
@@ -1146,7 +1148,8 @@ function submitDaily() {
       Dly.state = 'ranked';
       try { Dly.rank = await fetchDailyRank(day, score); Dly.rankAt = Date.now(); } catch (e) { Dly.rank = null; }
     } catch (e) {
-      console.warn('[auth] daily post failed', e);
+      console.warn('[auth] daily post failed', e && e.code, e);
+      Dly.err = (e && e.code) ? String(e.code).replace('firestore/', '') : 'unknown';
       Dly.state = 'failed';
     } finally {
       Dly.busy = null;
@@ -1160,14 +1163,14 @@ async function dailyStatus() {
   if (Dly.busy) await Dly.busy;
   const rec = App.getDaily();
   if (!dailyOk() || !rec || !rec.done) return { state: 'idle' };
-  if (Dly.state === 'failed' && Dly.day === rec.day) return { state: 'failed' };
+  if (Dly.state === 'failed' && Dly.day === rec.day) return { state: 'failed', code: Dly.err };
   if (Dly.state !== 'ranked' || Dly.day !== rec.day) {
     await submitDaily();
   } else if (Date.now() - Dly.rankAt > 30000) {
     try { Dly.rank = await fetchDailyRank(rec.day, Number(rec.score) || 0); Dly.rankAt = Date.now(); } catch (e) { /* keep the old rank */ }
   }
   if (Dly.state === 'ranked' && Dly.day === rec.day) return { state: 'ranked', rank: Dly.rank };
-  return { state: Dly.state === 'failed' ? 'failed' : 'idle' };
+  return Dly.state === 'failed' ? { state: 'failed', code: Dly.err } : { state: 'idle' };
 }
 
 // After login: post a finished run that was waiting for a login, or pick up today's run played on another device

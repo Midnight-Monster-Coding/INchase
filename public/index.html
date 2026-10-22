@@ -2129,7 +2129,7 @@
         note(r.submitted ? '' : 'POSTING YOUR SCORE...');
         cloud.status().then((s) => {
           if (s.state === 'ranked') note(s.rank ? 'RANK #' + s.rank + ' TODAY' : "POSTED TO TODAY'S RANKS");
-          else if (s.state === 'failed') note('COULD NOT REACH THE RANKS. WILL RETRY.');
+          else if (s.state === 'failed') note('COULD NOT REACH THE RANKS' + (s.code ? ' (' + String(s.code).toUpperCase() + ')' : '') + '. WILL RETRY.');
           else note('');
         }).catch(() => note(''));
       }
