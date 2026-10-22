@@ -1197,11 +1197,11 @@ async function dailyAfterLogin() {
   if (!dailyOk()) return;
   const rec = App.getDaily();
   if (rec && rec.done) { await submitDaily(); App.dailyChanged(); return; }
-  if (rec && rec.started) return;                      // a run is going on (or was left) on this device
+  if (rec && rec.started) { App.dailyChanged(); return; }   // a run is going on (or was left) on this device
   try {
     const day = App.dayNum();
     const snap = await getDoc(dailyRef(day, currentUser.uid));
-    if (!snap.exists()) return;
+    if (!snap.exists()) { App.dailyChanged(); return; }   // refresh the card: it is unlocked now
     const x = snap.data() || {};
     App.setDaily({ day, started: true, done: true, score: Number(x.score) || 0, wave: Number(x.wave) || 1, grid: String(x.grid || 'R'), submitted: true });
     App.dailyChanged();
@@ -1210,6 +1210,7 @@ async function dailyAfterLogin() {
 
 function dailyReset() {
   closeDailyRanks();
+  try { App.dailyChanged(); } catch (e) { /* ignore */ }   // logged out: the daily card locks again
   Dly.state = 'idle';
   Dly.day = null;
   Dly.rank = null;
@@ -1356,7 +1357,8 @@ window.INchaseDaily = {
   isLoggedIn: dailyOk,
   status: dailyStatus,
   submit: submitDaily,
-  openRanks: openDailyRanks
+  openRanks: openDailyRanks,
+  openLogin: openWelcome
 };
 
 log('auth.js ready');

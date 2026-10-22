@@ -2045,6 +2045,8 @@
         dailyRec = r;
         try { localStorage.setItem(DAILY_KEY, JSON.stringify(r)); } catch (err) { /* ignore */ }
       }
+      // Guests (not logged in) can not play the daily. Until auth.js has loaded nobody counts as logged in.
+      function dailyAllowed() { const c = window.INchaseDaily; return !!(c && c.isLoggedIn && c.isLoggedIn()); }
       function dailyStarted() { const r = getDailyRec(); return !!(r && r.started); }
 
       let toastTimer = null;
@@ -2087,14 +2089,17 @@
         UI.overlayBadge.textContent = 'DAILY #' + dailyNumber();
         UI.overlayTitle.textContent = 'DAILY RUN';
         UI.overlaySubtitle.className = 'mt-3 text-[11px] leading-relaxed';
-        UI.overlaySubtitle.textContent = 'SAME CHALLENGE FOR EVERYONE. ONE ATTEMPT A DAY. LEAVING MID-RUN USES IT UP.';
+        const locked = !dailyAllowed();
+        UI.overlaySubtitle.textContent = locked
+          ? 'LOGIN TO PLAY THE DAILY RUN. GUESTS CAN NOT JOIN TODAY\'S RANKS.'
+          : 'SAME CHALLENGE FOR EVERYONE. ONE ATTEMPT A DAY. LEAVING MID-RUN USES IT UP.';
         UI.overlayStats.classList.add('hidden');
         UI.newBestTag.classList.add('hidden');
         UI.nearMsg.classList.add('hidden');
         UI.rivalMsg.classList.add('hidden');
         UI.dailyDoneBox.classList.add('hidden');
         UI.dailyExtras.classList.remove('hidden');
-        UI.overlayPrimaryBtn.textContent = 'START';
+        UI.overlayPrimaryBtn.textContent = locked ? 'LOGIN TO PLAY' : 'START';
         updateDailyNext();
       }
 
@@ -3468,6 +3473,12 @@
       }
 
       function startNewRun() {
+        // Daily Run is for logged-in players only: guests are sent to the login window
+        if (Game.mode === 'daily' && !dailyAllowed()) {
+          showToast('LOGIN TO PLAY THE DAILY RUN');
+          if (window.INchaseDaily && window.INchaseDaily.openLogin) window.INchaseDaily.openLogin();
+          return;
+        }
         // Daily Run is ONE attempt: R / NEW RUN / Space can not restart it once it has begun
         if (Game.mode === 'daily' && dailyStarted()) {
           showToast('DAILY HAS ONE ATTEMPT. TRY ARCADE!');
