@@ -26,7 +26,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-auth.js";
 import {
   getFirestore, doc, getDoc, setDoc, runTransaction, serverTimestamp,
-  collection, query, orderBy, limit, where, getDocs, getCountFromServer, writeBatch, onSnapshot
+  collection, query, orderBy, limit, where, getDocs, getCountFromServer, writeBatch, onSnapshot, Timestamp
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 import {
   getDatabase, ref as dbRef, push as dbPush, set as dbSet, remove as dbRemove,
@@ -357,6 +357,7 @@ function finishLogin(user, username, photoURL, custom) {
   ['welcomeModal', 'loginModal', 'nameModal'].forEach(hideModal);
   if (needPush) { needPush = false; schedulePush(); }
   syncBoardAfterLogin();
+  dailyAfterLogin();
 }
 
 async function handleSignedIn(user) {
@@ -601,6 +602,7 @@ async function syncBoardAfterLogin() {
 }
 
 function resetBoard() {
+  dailyReset();
   Board.seq++;
   stopBoardLive();
   Board.rows = [];
@@ -1075,5 +1077,263 @@ $('photoRemoveBtn').addEventListener('click', async () => {
   }
   setPhotoBusy(false);
 });
+
+/* ---------------------------------------------------------------------------
+ * 9. Daily Run ranks (Firestore: daily/{dayNumber}/entries/{uid})
+ *
+ *  - Every UTC day has its own collection path, so at midnight the board is simply a new, empty one:
+ *    nothing has to be deleted for "yesterday's scores" to disappear from view. A Firestore TTL policy on
+ *    the `expireAt` field removes the old documents by itself later (see the notes in firestore.rules).
+ *  - A score is written ONCE. The rules allow create only (no update, no delete), the day in the path must
+ *    be today by the SERVER clock, and the name must match the private profile. So nobody can edit or
+ *    remove a posted score, or post one for another day / another player.
+ *  - index.html talks to this section through window.INchaseDaily: isLoggedIn / status / openRanks / submit.
+ * ------------------------------------------------------------------------ */
+const DAILY_TOP = 50;                // players loaded (the list scrolls inside its box)
+const DAILY_PIN_AFTER = 5;           // my own row is pinned under the list when I am not among the first rows
+const Dly = {
+  state: 'idle',                     // my score for today: 'idle' | 'posting' | 'ranked' | 'failed'
+  day: null,                         // day number that state belongs to
+  rank: null,                        // my rank today
+  rankAt: 0,                         // when that rank was read
+  busy: null,                        // in-flight submit promise
+  rows: [], loading: false, error: false, slow: false,
+  unsub: null, seq: 0, viewDay: null, tick: null, slowTimer: null
+};
+
+const dailyOk = () => !!(currentUser && profile && profile.uid === currentUser.uid);
+const dailyRef = (day, uid) => doc(db, 'daily', String(day), 'entries', uid);
+const dailyCol = (day) => collection(db, 'daily', String(day), 'entries');
+
+async function fetchDailyRank(day, score) {
+  const snap = await getCountFromServer(query(dailyCol(day), where('score', '>', score)));
+  return snap.data().count + 1;
+}
+
+// Post today's finished run. Safe to call again: it never overwrites an entry that already exists.
+function submitDaily() {
+  if (Dly.busy) return Dly.busy;
+  if (!dailyOk()) return Promise.resolve();
+  const rec = App.getDaily();
+  if (!rec || !rec.done) return Promise.resolve();
+  const day = rec.day;
+  const uid = currentUser.uid;
+  Dly.day = day;
+  Dly.state = 'posting';
+  Dly.busy = (async () => {
+    try {
+      const ref = dailyRef(day, uid);
+      const snap = await getDoc(ref);
+      let score;
+      if (snap.exists()) {
+        score = Number((snap.data() || {}).score) || 0;        // already posted (earlier try or another device)
+      } else {
+        score = Math.max(0, Math.floor(Number(rec.score) || 0));
+        const photo = typeof profile.photoURL === 'string' && /^https?:/.test(profile.photoURL) && profile.photoURL.length <= 600 ? profile.photoURL : '';
+        await setDoc(ref, {
+          username: profile.username,
+          usernameLower: profile.username.toLowerCase(),
+          photoURL: photo,
+          score,
+          wave: Math.max(1, Math.floor(Number(rec.wave) || 1)),
+          grid: String(rec.grid || '').replace(/[^GYR]/g, '').slice(0, 60),
+          day,
+          createdAt: serverTimestamp(),
+          expireAt: Timestamp.fromMillis((day + 3) * 86400000)   // the TTL policy deletes the document after this
+        });
+      }
+      App.markDailySubmitted();
+      Dly.state = 'ranked';
+      try { Dly.rank = await fetchDailyRank(day, score); Dly.rankAt = Date.now(); } catch (e) { Dly.rank = null; }
+    } catch (e) {
+      console.warn('[auth] daily post failed', e);
+      Dly.state = 'failed';
+    } finally {
+      Dly.busy = null;
+    }
+  })();
+  return Dly.busy;
+}
+
+// What the result card asks for: { state: 'ranked' | 'failed' | 'idle', rank }
+async function dailyStatus() {
+  if (Dly.busy) await Dly.busy;
+  const rec = App.getDaily();
+  if (!dailyOk() || !rec || !rec.done) return { state: 'idle' };
+  if (Dly.state === 'failed' && Dly.day === rec.day) return { state: 'failed' };
+  if (Dly.state !== 'ranked' || Dly.day !== rec.day) {
+    await submitDaily();
+  } else if (Date.now() - Dly.rankAt > 30000) {
+    try { Dly.rank = await fetchDailyRank(rec.day, Number(rec.score) || 0); Dly.rankAt = Date.now(); } catch (e) { /* keep the old rank */ }
+  }
+  if (Dly.state === 'ranked' && Dly.day === rec.day) return { state: 'ranked', rank: Dly.rank };
+  return { state: Dly.state === 'failed' ? 'failed' : 'idle' };
+}
+
+// After login: post a finished run that was waiting for a login, or pick up today's run played on another device
+async function dailyAfterLogin() {
+  if (!dailyOk()) return;
+  const rec = App.getDaily();
+  if (rec && rec.done) { await submitDaily(); App.dailyChanged(); return; }
+  if (rec && rec.started) return;                      // a run is going on (or was left) on this device
+  try {
+    const day = App.dayNum();
+    const snap = await getDoc(dailyRef(day, currentUser.uid));
+    if (!snap.exists()) return;
+    const x = snap.data() || {};
+    App.setDaily({ day, started: true, done: true, score: Number(x.score) || 0, wave: Number(x.wave) || 1, grid: String(x.grid || 'R'), submitted: true });
+    App.dailyChanged();
+  } catch (e) { log('daily pickup failed', e); }
+}
+
+function dailyReset() {
+  closeDailyRanks();
+  Dly.state = 'idle';
+  Dly.day = null;
+  Dly.rank = null;
+  Dly.busy = null;
+}
+
+// A failed post tries again by itself when the connection is back or the tab is shown again
+function dailyRetry() {
+  if (Dly.state === 'failed' && dailyOk()) submitDaily().then(() => App.dailyChanged());
+}
+window.addEventListener('online', dailyRetry);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) dailyRetry(); });
+
+// --- ranks window ---
+function buildDailyRow(rank, p, isMe) {
+  const row = buildRow(rank, p, isMe);
+  const n = row.querySelector('.lb-name');
+  if (n) n.classList.remove('lb-link');                // no player card from daily rows
+  return row;
+}
+
+function renderDaily() {
+  const list = $('dailyList');
+  const me = $('dailyMe');
+  if (!list || !me) return;
+  const myUid = currentUser ? currentUser.uid : null;
+  const rec = App.getDaily();
+  const idx = myUid ? Dly.rows.findIndex((r) => r.uid === myUid) : -1;
+  const keep = list.scrollTop;
+  list.textContent = '';
+  me.textContent = '';
+
+  const offline = navigator.onLine === false || Dly.slow || Dly.error;
+  if (Dly.rows.length) {
+    Dly.rows.forEach((r) => list.appendChild(buildDailyRow(r.rank, r, r.uid === myUid)));
+  } else if (offline) {
+    list.appendChild(buildNote('RANKS NEED AN INTERNET CONNECTION.'));
+  } else if (Dly.loading) {
+    list.appendChild(buildNote('LOADING...'));
+  } else {
+    list.appendChild(buildNote('NO SCORES YET TODAY. BE THE FIRST!'));
+  }
+  list.scrollTop = keep;
+
+  // my own row, pinned below the list when I am not near the top
+  const played = !!(rec && rec.done && dailyOk());
+  const myRank = idx > -1 ? Dly.rows[idx].rank : (Dly.state === 'ranked' ? Dly.rank : null);
+  if (played && myRank != null && !(idx > -1 && idx < DAILY_PIN_AFTER)) {
+    me.appendChild(buildDailyRow(myRank, { uid: profile.uid, username: profile.username, photoURL: profile.photoURL, best: Number(rec.score) || 0 }, true));
+    me.classList.remove('lb-off');
+  } else {
+    me.classList.add('lb-off');
+  }
+}
+
+function updateDailySub() {
+  const sub = $('dailySub');
+  if (sub) sub.textContent = 'DAILY #' + App.dailyNumber() + ' \u00B7 RESETS IN ' + App.dailyTimeLeft();
+}
+
+function stopDailyLive() {
+  if (Dly.unsub) { try { Dly.unsub(); } catch (e) { /* ignore */ } Dly.unsub = null; }
+  clearTimeout(Dly.slowTimer);
+  Dly.slowTimer = null;
+}
+
+function startDailyLive() {
+  stopDailyLive();
+  const seq = ++Dly.seq;
+  const day = App.dayNum();
+  Dly.viewDay = day;
+  Dly.rows = [];
+  Dly.loading = true;
+  Dly.error = false;
+  Dly.slow = false;
+  renderDaily();
+  // offline, Firestore just waits quietly: after a few seconds say so instead of "LOADING..." forever
+  Dly.slowTimer = setTimeout(() => { if (seq === Dly.seq && Dly.loading) { Dly.slow = true; renderDaily(); } }, 7000);
+  Dly.unsub = onSnapshot(query(dailyCol(day), orderBy('score', 'desc'), limit(DAILY_TOP)), (snap) => {
+    if (seq !== Dly.seq) return;
+    const rows = [];
+    snap.docs.forEach((d) => {
+      const x = d.data() || {};
+      const score = Number(x.score) || 0;
+      const prev = rows[rows.length - 1];
+      rows.push({
+        uid: d.id,
+        username: String(x.username || '?'),
+        photoURL: typeof x.photoURL === 'string' ? x.photoURL : '',
+        best: score,
+        rank: prev && prev.best === score ? prev.rank : rows.length + 1      // ties share a rank
+      });
+    });
+    Dly.rows = rows;
+    Dly.loading = false;
+    Dly.error = false;
+    Dly.slow = false;
+    renderDaily();
+    // I played but I am below the loaded rows: look up my rank
+    const rec = App.getDaily();
+    if (dailyOk() && rec && rec.done && !rows.some((r) => r.uid === currentUser.uid) && Dly.state !== 'posting') {
+      dailyStatus().then(() => { if (seq === Dly.seq) renderDaily(); });
+    }
+  }, (err) => {
+    console.warn('[auth] daily ranks listener failed', err);
+    if (seq !== Dly.seq) return;
+    Dly.unsub = null;
+    Dly.loading = false;
+    Dly.error = true;
+    renderDaily();
+  });
+}
+
+function openDailyRanks() {
+  if (!dailyOk()) {
+    toast("LOGIN TO SEE TODAY'S RANKS");
+    openWelcome();
+    return;
+  }
+  showModal('dailyModal');
+  updateDailySub();
+  startDailyLive();
+  clearInterval(Dly.tick);
+  Dly.tick = setInterval(() => {
+    if (!isOpen('dailyModal')) { closeDailyRanks(); return; }
+    updateDailySub();
+    if (App.dayNum() !== Dly.viewDay) startDailyLive();   // midnight passed with the window open: a new, empty board
+  }, 1000);
+}
+
+function closeDailyRanks() {
+  clearInterval(Dly.tick);
+  Dly.tick = null;
+  stopDailyLive();
+  hideModal('dailyModal');
+}
+
+$('dailyCloseBtn').addEventListener('click', closeDailyRanks);
+$('dailyModal').addEventListener('click', (e) => { if (e.target === $('dailyModal')) closeDailyRanks(); });
+window.addEventListener('keydown', (e) => { if (e.code === 'Escape' && isOpen('dailyModal')) closeDailyRanks(); });
+
+window.INchaseDaily = {
+  isLoggedIn: dailyOk,
+  status: dailyStatus,
+  submit: submitDaily,
+  openRanks: openDailyRanks
+};
 
 log('auth.js ready');
