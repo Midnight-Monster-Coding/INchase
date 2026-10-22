@@ -1102,6 +1102,25 @@ const Dly = {
   unsub: null, seq: 0, viewDay: null, tick: null, slowTimer: null
 };
 
+const dailyPhotos = new Map();       // uid -> photo (data URL or https) read from the public leaderboard entry
+
+// Daily entries only keep short https photos (rules: <= 600 chars). Uploaded avatars are big data URLs,
+// so for rows with no photo we read the player's public leaderboard entry, which can hold them.
+function fillDailyPhotos(seq) {
+  const missing = Dly.rows.filter((r) => !r.photoURL && !dailyPhotos.has(r.uid));
+  Dly.rows.forEach((r) => { if (!r.photoURL && dailyPhotos.get(r.uid)) r.photoURL = dailyPhotos.get(r.uid); });
+  if (!missing.length) return;
+  Promise.all(missing.map((r) =>
+    getDoc(doc(db, 'leaderboard', r.uid))
+      .then((s) => { dailyPhotos.set(r.uid, s.exists() && typeof (s.data() || {}).photoURL === 'string' ? s.data().photoURL : ''); })
+      .catch(() => {})
+  )).then(() => {
+    if (seq !== Dly.seq) return;
+    Dly.rows.forEach((r) => { if (!r.photoURL && dailyPhotos.get(r.uid)) r.photoURL = dailyPhotos.get(r.uid); });
+    renderDaily();
+  });
+}
+
 const dailyOk = () => !!(currentUser && profile && profile.uid === currentUser.uid);
 const dailyRef = (day, uid) => doc(db, 'daily', String(day), 'entries', uid);
 const dailyCol = (day) => collection(db, 'daily', String(day), 'entries');
@@ -1288,6 +1307,7 @@ function startDailyLive() {
     Dly.loading = false;
     Dly.error = false;
     Dly.slow = false;
+    fillDailyPhotos(seq);
     renderDaily();
     // I played but I am below the loaded rows: look up my rank
     const rec = App.getDaily();
