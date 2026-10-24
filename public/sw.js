@@ -5,7 +5,7 @@
    - Everything else (Firebase auth incl. /__/auth/*, Firestore, Google APIs, POST requests) is never touched
    Bump CACHE_VERSION to force every device to drop old caches. */
 
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 const CACHE = 'inchase-' + CACHE_VERSION;
 
 const PRECACHE = [
@@ -68,7 +68,7 @@ self.addEventListener('fetch', (event) => {
   // Page loads: network first, cache fallback
   if (req.mode === 'navigate') {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-cache' })   // ask the server every time: Firebase Hosting's default 1h HTTP cache must not serve an old page
         .then((res) => {
           if (sameOrigin && res && res.ok && res.type === 'basic') { const copy = res.clone(); caches.open(CACHE).then((c) => c.put('/', copy)); }
           return res;
@@ -84,7 +84,7 @@ self.addEventListener('fetch', (event) => {
   // Your own scripts: network first, so a new auth.js is used on the very next load (not the one after)
   if (sameOrigin && url.pathname.endsWith('.js')) {
     event.respondWith(
-      fetch(req)
+      fetch(req, { cache: 'no-cache' })
         .then((res) => {
           if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
           return res;
