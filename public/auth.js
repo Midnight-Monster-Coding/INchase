@@ -21,7 +21,7 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebas
 import { getAnalytics, isSupported } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-analytics.js";
 import {
   getAuth, onAuthStateChanged, signOut,
-  GoogleAuthProvider, signInWithPopup, signInWithRedirect,
+  GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
   createUserWithEmailAndPassword, signInWithEmailAndPassword,
   sendPasswordResetEmail,
   sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink
@@ -58,6 +58,16 @@ const EMAIL_KEY = 'inchase_email_for_signin';    // remembered between "send lin
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 const lsDel = (k) => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
+
+// Installed app (Microsoft Store / PWABuilder / "Install app"): popups and external browser hops are unreliable there.
+const IS_APP = (() => {
+  try {
+    const mq = (q) => window.matchMedia && window.matchMedia(q).matches;
+    return mq('(display-mode: standalone)') || mq('(display-mode: window-controls-overlay)') ||
+      mq('(display-mode: minimal-ui)') || mq('(display-mode: fullscreen)') ||
+      navigator.standalone === true || !!(window.chrome && window.chrome.webview);
+  } catch (e) { return false; }
+})();
 
 const DEBUG = lsGet('inchase_debug') === '1';
 const log = (...a) => { if (DEBUG) console.log('[auth]', ...a); };
@@ -179,7 +189,7 @@ $('signOutBtn').addEventListener('click', async () => {
 /* ---------------------------------------------------------------------------
  * 3. Welcome + login modals
  * ------------------------------------------------------------------------ */
-const AUTH_BUTTONS = ['googleBtn', 'emailLoginBtn', 'emailSignupBtn', 'emailLinkBtn', 'forgotBtn'];
+const AUTH_BUTTONS = ['googleBtn', 'emailLoginBtn', 'emailSignupBtn', 'emailLinkBtn', 'linkFinishBtn', 'forgotBtn'];
 const setMsg = (t) => { $('authMsg').textContent = t; };
 const setAuthBusy = (b) => AUTH_BUTTONS.forEach((id) => { $(id).disabled = b; });
 
@@ -217,6 +227,8 @@ function explain(err) {
     case 'auth/operation-not-allowed': return 'THIS LOGIN METHOD IS NOT ENABLED IN FIREBASE.';
     case 'auth/unauthorized-domain': return 'THIS DOMAIN IS NOT AUTHORIZED IN FIREBASE.';
     case 'auth/account-exists-with-different-credential': return 'THIS EMAIL USES ANOTHER LOGIN METHOD.';
+    case 'auth/popup-blocked': return 'POPUP BLOCKED. TAP GOOGLE AGAIN.';
+    case 'auth/web-storage-unsupported': return 'THIS WINDOW BLOCKS LOGIN STORAGE. USE EMAIL LOGIN.';
     case 'auth/popup-closed-by-user':
     case 'auth/cancelled-popup-request': return 'LOGIN CANCELLED.';
     case 'auth/invalid-action-code':
@@ -240,19 +252,31 @@ async function run(label, fn) {
 }
 
 // --- Google ---
+// Installed app: go straight to redirect (a popup can hang or open in the default browser and never report back).
+// Browser tab: popup first, redirect as the fallback.
 $('googleBtn').addEventListener('click', () => run('google', async () => {
   const provider = new GoogleAuthProvider();
+  provider.setCustomParameters({ prompt: 'select_account' });
+  if (IS_APP) {
+    setMsg('OPENING GOOGLE LOGIN...');
+    const rescue = setTimeout(() => { setAuthBusy(false); setMsg('GOOGLE DID NOT OPEN. TAP GOOGLE AGAIN OR USE EMAIL.'); }, 20000);
+    try { await signInWithRedirect(auth, provider); } catch (err) { clearTimeout(rescue); throw err; }
+    return;
+  }
   try {
     await signInWithPopup(auth, provider);
   } catch (err) {
     const code = err && err.code;
-    if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+    if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment' || code === 'auth/web-storage-unsupported') {
       await signInWithRedirect(auth, provider);   // page leaves; result is picked up on return
       return;
     }
     throw err;
   }
 }));
+
+// Back from a Google redirect: onAuthStateChanged does the sign-in itself; this only surfaces a failure.
+getRedirectResult(auth).catch((err) => { toast(explain(err)); });
 
 // --- Email + password ---
 $('emailLoginBtn').addEventListener('click', () => run('email-login', async () => {
@@ -284,25 +308,57 @@ $('emailLinkBtn').addEventListener('click', () => run('email-link', async () => 
     handleCodeInApp: true
   });
   lsSet(EMAIL_KEY, email);
-  setMsg('LOGIN LINK SENT. OPEN IT FROM YOUR EMAIL (CHECK SPAM).');
+  setMsg('LOGIN LINK SENT (CHECK SPAM). IF IT OPENS IN YOUR BROWSER, COPY THE LINK AND PASTE IT BELOW.');
 }));
 
-async function completeEmailLinkIfPresent() {
-  if (!isSignInWithEmailLink(auth, location.href)) return;
+let lastLinkTried = '';
+// Finishes a login from an email link. `href` is the opened page URL, a launch URL handed over by the OS,
+// or a link pasted by the player. Returns true when a sign-in was attempted.
+async function completeEmailLink(href, typedEmail) {
+  if (completingLink || !href || href === lastLinkTried) return false;
+  if (!isSignInWithEmailLink(auth, href)) return false;
+  lastLinkTried = href;
   completingLink = true;
   log('finishing email-link login');
-  let email = lsGet(EMAIL_KEY);
-  if (!email) email = window.prompt('ENTER THE EMAIL YOU REQUESTED THE LINK WITH');  // opened on a different device
-  if (!email) { completingLink = false; toast('LOGIN LINK NOT COMPLETED'); return; }
+  let email = typedEmail || lsGet(EMAIL_KEY);
+  if (!email) { try { email = window.prompt('ENTER THE EMAIL YOU REQUESTED THE LINK WITH'); } catch (e) { email = null; } }
+  if (!email) {
+    // opened on another device, or this window cannot show prompts: let the player type it in the login box
+    completingLink = false;
+    lastLinkTried = '';
+    openLogin();
+    $('linkInput').value = href;
+    setMsg('TYPE YOUR EMAIL ABOVE, THEN TAP FINISH LOGIN.');
+    return false;
+  }
   try {
-    await signInWithEmailLink(auth, email.trim(), location.href);
+    await signInWithEmailLink(auth, email.trim(), href);
     lsDel(EMAIL_KEY);
+    $('linkInput').value = '';
   } catch (err) {
+    lastLinkTried = '';
     toast(explain(err));
   }
   completingLink = false;
-  history.replaceState(null, '', location.pathname);   // remove the one-time code from the address bar
+  if (href === location.href) history.replaceState(null, '', location.pathname);   // remove the one-time code from the address bar
+  return true;
 }
+const completeEmailLinkIfPresent = () => completeEmailLink(location.href);
+
+// Installed app: when the OS hands a clicked email link to the already-open app window, finish the login here.
+if ('launchQueue' in window && window.launchQueue && typeof window.launchQueue.setConsumer === 'function') {
+  window.launchQueue.setConsumer((p) => { if (p && p.targetURL) completeEmailLink(p.targetURL); });
+}
+
+// Player pasted the link from the email (works even when the email link opened in the browser instead of the app)
+$('linkFinishBtn').addEventListener('click', () => run('email-link-paste', async () => {
+  const email = readEmail(); if (!email) return;
+  const link = $('linkInput').value.trim();
+  if (!link || !isSignInWithEmailLink(auth, link)) { setMsg('THAT IS NOT A LOGIN LINK. COPY THE WHOLE LINK FROM THE EMAIL.'); return; }
+  await signInWithEmailLink(auth, email, link);
+  lsDel(EMAIL_KEY);
+  $('linkInput').value = '';
+}));
 
 /* ---------------------------------------------------------------------------
  * 4. Cloud save (Firestore: users/{uid})
@@ -407,7 +463,7 @@ onAuthStateChanged(auth, async (user) => {
     hideModal('accountModal');
     closePlayerCard();
     const mode = lsGet(MODE_KEY);
-    if (!mode && !completingLink) { await splashDone; if (!currentUser && !completingLink) openWelcome(); }
+    if (!mode && !completingLink) { await splashDone; if (!currentUser && !completingLink && !isOpen('loginModal')) openWelcome(); }
     else if (mode === 'user') lsSet(MODE_KEY, 'guest');
   }
 });

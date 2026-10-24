@@ -2,10 +2,10 @@
    - HTML: network first, falls back to cache when offline
    - Same-origin files (js, png, json): stale-while-revalidate
    - Tailwind CDN + Google Fonts: stale-while-revalidate so the game can open offline
-   - Everything else (Firebase auth, Firestore, Google APIs, POST requests) is never touched
+   - Everything else (Firebase auth incl. /__/auth/*, Firestore, Google APIs, POST requests) is never touched
    Bump CACHE_VERSION to force every device to drop old caches. */
 
-const CACHE_VERSION = 'v4';
+const CACHE_VERSION = 'v5';
 const CACHE = 'inchase-' + CACHE_VERSION;
 
 const PRECACHE = [
@@ -62,13 +62,15 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(req.url);
   const sameOrigin = url.origin === self.location.origin;
 
+  // Firebase auth handler / email-link pages (/__/auth/..., /__/firebase/...): never touch them, never cache them
+  if (sameOrigin && url.pathname.startsWith('/__/')) return;
+
   // Page loads: network first, cache fallback
   if (req.mode === 'navigate') {
     event.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('/', copy));
+          if (sameOrigin && res && res.ok && res.type === 'basic') { const copy = res.clone(); caches.open(CACHE).then((c) => c.put('/', copy)); }
           return res;
         })
         .catch(() => caches.match('/').then((r) => r || caches.match(req)))
