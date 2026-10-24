@@ -1029,6 +1029,7 @@
        * ========================================================================= */
       const STORAGE_KEY = 'inchase_iab_v2';
       const store = { best: 0, total: 0, light: false, ctrl: null, runs: [], uid: null };
+      let authApi = null;   // private handle to auth.js (set once by the handshake near the end of this script; never on window)
 
       function loadStore() {
         try {
@@ -1056,7 +1057,7 @@
         } catch (err) {
           // Ignore storage restrictions
         }
-        if (syncCloud !== false && window.INchaseCloud) window.INchaseCloud.schedulePush();
+        if (syncCloud !== false && authApi) authApi.schedulePush();
       }
 
       loadStore();
@@ -2046,7 +2047,7 @@
         try { localStorage.setItem(DAILY_KEY, JSON.stringify(r)); } catch (err) { /* ignore */ }
       }
       // Guests (not logged in) can not play the daily. Until auth.js has loaded nobody counts as logged in.
-      function dailyAllowed() { const c = window.INchaseDaily; return !!(c && c.isLoggedIn && c.isLoggedIn()); }
+      function dailyAllowed() { const c = authApi; return !!(c && c.isLoggedIn && c.isLoggedIn()); }
       function dailyStarted() { const r = getDailyRec(); return !!(r && r.started); }
 
       let toastTimer = null;
@@ -2128,7 +2129,7 @@
           UI.nearMsg.textContent = txt;
           UI.nearMsg.classList.toggle('hidden', !txt);
         };
-        const cloud = window.INchaseDaily;
+        const cloud = authApi;
         if (!r.done || !cloud) { note(''); return; }
         if (!cloud.isLoggedIn()) { note("LOGIN TO JOIN TODAY'S RANKS"); return; }
         note(r.submitted ? '' : 'POSTING YOUR SCORE...');
@@ -2193,7 +2194,7 @@
         setDailyRec(rec);
         SEED.on = false;
         refreshDailyBadge();
-        if (window.INchaseDaily) window.INchaseDaily.submit();   // posts to today's ranks (needs login); status() then reports the rank
+        if (authApi) authApi.submit();   // posts to today's ranks (needs login); status() then reports the rank
         endSnap = { mode: 'daily', title: 'DAILY COMPLETE', showing: true, newBestHidden: true, rivalHidden: true, nearHidden: true, nearText: '' };
         showDailyDone(rec);
         UI.canvasOverlay.classList.remove('hidden');
@@ -3476,7 +3477,7 @@
         // Daily Run is for logged-in players only: guests are sent to the login window
         if (Game.mode === 'daily' && !dailyAllowed()) {
           showToast('LOGIN TO PLAY THE DAILY RUN');
-          if (window.INchaseDaily && window.INchaseDaily.openLogin) window.INchaseDaily.openLogin();
+          if (authApi && authApi.openLogin) authApi.openLogin();
           return;
         }
         // Daily Run is ONE attempt: R / NEW RUN / Space can not restart it once it has begun
@@ -3595,7 +3596,7 @@
       let endSnap = null; // overlay state of the match that just finished (null while not on the game-over screen)
       // "Beat #name by N": the closest player above this score (lookup lives in auth.js)
       function showRival(score) {
-        const find = window.INchaseApp && window.INchaseApp.findRival;
+        const find = authApi && authApi.findRival;
         if (!find) return;
         const id = ++rivalSeq;
         Promise.resolve(find(score)).then((r) => {
@@ -3735,7 +3736,7 @@
       UI.overlayPrimaryBtn.addEventListener('click', primaryAction);
       UI.dailyShareBtn.addEventListener('click', shareDaily);
       UI.dailyRanksBtn.addEventListener('click', () => {
-        if (window.INchaseDaily) window.INchaseDaily.openRanks();
+        if (authApi) authApi.openRanks();
         else showToast('RANKS NEED AN INTERNET CONNECTION.');
       });
 
@@ -3787,7 +3788,7 @@
       // Keyboard Controls
       window.addEventListener('keydown', (e) => {
         const code = e.code;
-        if (window.INchaseAuthBusy && window.INchaseAuthBusy()) return;
+        if (authApi && authApi.isBusy && authApi.isBusy()) return;
         const blitzNoticeEl = document.getElementById('blitzNoticeModal');
         if (!UI.infoModal.classList.contains('hidden') || !UI.bestModal.classList.contains('hidden') || !blitzNoticeEl.classList.contains('hidden')) {
           if (code === 'Escape' || code === 'Space') {
@@ -3964,8 +3965,9 @@
       document.addEventListener('selectstart', (e) => { if (!inTextField(e.target)) e.preventDefault(); });
       document.addEventListener('contextmenu', (e) => { if (!inTextField(e.target)) e.preventDefault(); });
 
-      // Bridge used by the Firebase login module
-      window.INchaseApp = {
+      // Bridge used by the Firebase login module. It lives only inside this closure: nothing on window
+      // exposes it, so the console cannot call setData() / schedulePush() to forge a score.
+      const bridge = {
         getUid: () => store.uid,
         setUid: (u) => { store.uid = u || null; saveStore(false); },
         getData: () => ({ best: store.best, total: store.total, runs: store.runs.slice(), light: store.light, ctrl: store.ctrl }),
@@ -3994,6 +3996,17 @@
         dailyChanged: () => refreshDailyUI(),
         dailyNumber: () => dailyNumber(),
         dailyTimeLeft: () => dailyTimeLeft()
+      };
+
+      window.addEventListener('inchase-pause', () => { if (Game.state === 'playing') togglePause(); });
+
+      // One-time handshake. auth.js (a deferred module) calls this exactly once while the page loads,
+      // hands over its own private API and receives the bridge. The hook then deletes itself.
+      window.__inchaseLink = function (api) {
+        delete window.__inchaseLink;
+        if (authApi || !api) return null;
+        authApi = api;
+        return bridge;
       };
 
       window.onload = function () {
@@ -4072,7 +4085,7 @@
 
       function openCreations() {
         // Same pause behaviour as the login / account popups
-        if (window.INchaseApp && window.INchaseApp.pauseIfPlaying) window.INchaseApp.pauseIfPlaying();
+        window.dispatchEvent(new Event('inchase-pause'));   // the game pauses itself (nothing on window exposes game state)
         modal.classList.remove('hidden');
         closeBtn.focus({ preventScroll: true });
       }

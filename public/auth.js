@@ -7,9 +7,11 @@
  *   3. Account chip (avatar + #username)
  *   4. Cloud save of best score / match history (browser cache stays the fast path)
  *
- * It talks to the game only through window.INchaseApp (defined in index.html):
- *   getUid / setUid / getData / setData / resetData / pauseIfPlaying
- * and the game calls window.INchaseCloud.schedulePush() whenever it saves.
+ * It talks to the game through a one-time private handshake (window.__inchaseLink, defined in index.html,
+ * deletes itself on first use). Nothing is left on window, so the browser console cannot reach the
+ * score / cloud-save functions. The bridge gives auth.js:
+ *   getUid / setUid / getData / setData / resetData / pauseIfPlaying / daily helpers
+ * and auth.js hands the game schedulePush / daily / rival / isBusy functions in return.
  *
  * Debugging: run  localStorage.inchase_debug = '1'  in the console and reload
  * to see "[auth]" logs for every step.
@@ -38,14 +40,15 @@ import { firebaseConfig } from "./firebase-config.js";
  * 0. Setup + helpers
  * ------------------------------------------------------------------------ */
 const app = initializeApp(firebaseConfig);
-window.firebaseApp = app;
 isSupported().then((ok) => { if (ok) getAnalytics(app); }).catch(() => {});
 
 const auth = getAuth(app);
 const db = getFirestore(app);
 let rtdb = null;             // Realtime Database: used only for online / offline presence
 try { rtdb = getDatabase(app); } catch (e) { console.warn('[auth] realtime database unavailable', e); }
-const App = window.INchaseApp;
+// Private handshake: the game gives us its bridge once; we give it our API at the bottom of this file.
+const App = (typeof window.__inchaseLink === 'function') ? window.__inchaseLink(authApiForGame()) : null;
+if (!App) throw new Error('INchase: game bridge unavailable');
 
 const $ = (id) => document.getElementById(id);
 const MODE_KEY = 'inchase_mode';                 // 'guest' | 'user'
@@ -64,7 +67,7 @@ const hideModal = (id) => $(id).classList.add('hidden');
 const isOpen = (id) => !$(id).classList.contains('hidden');
 
 // The game checks this so WASD / Space don't move the player while you type.
-window.INchaseAuthBusy = () => !!document.querySelector('.auth-modal:not(.hidden)');
+const authBusy = () => !!document.querySelector('.auth-modal:not(.hidden)');
 
 function toast(msg) {
   const t = $('toast');
@@ -327,7 +330,6 @@ function schedulePush() {
   clearTimeout(pushTimer);
   pushTimer = setTimeout(pushNow, 800);
 }
-window.INchaseCloud = { schedulePush };
 document.addEventListener('visibilitychange', () => { if (document.hidden && pushTimer) pushNow(); });
 
 /* ---------------------------------------------------------------------------
@@ -643,7 +645,7 @@ async function fetchMyRank() {
 
 // Rival: the closest player above `score`, never me. Uses the loaded rows only if they reach down to this
 // score (or the whole board is loaded); otherwise runs a one-off query.
-App.findRival = async function (score) {
+async function findRival(score) {
   if (!currentUser || !profile) return null;
   const rows = Board.rows;
   if (rows.length && (Board.done || rows[rows.length - 1].best <= score)) {
@@ -661,7 +663,7 @@ App.findRival = async function (score) {
     console.warn('[auth] rival lookup failed', e);
     return null;
   }
-};
+}
 
 // --- live leaderboard: a Firestore listener on the top `Board.limit` players ---
 function stopBoardLive() {
@@ -1087,7 +1089,7 @@ $('photoRemoveBtn').addEventListener('click', async () => {
  *  - A score is written ONCE. The rules allow create only (no update, no delete), the day in the path must
  *    be today by the SERVER clock, and the name must match the private profile. So nobody can edit or
  *    remove a posted score, or post one for another day / another player.
- *  - index.html talks to this section through window.INchaseDaily: isLoggedIn / status / openRanks / submit.
+ *  - index.html talks to this section through the private handshake API (see authApiForGame): isLoggedIn / status / openRanks / submit.
  * ------------------------------------------------------------------------ */
 const DAILY_TOP = 50;                // players loaded (the list scrolls inside its box)
 const DAILY_PIN_AFTER = 5;           // my own row is pinned under the list when I am not among the first rows
@@ -1353,12 +1355,19 @@ $('dailyCloseBtn').addEventListener('click', closeDailyRanks);
 $('dailyModal').addEventListener('click', (e) => { if (e.target === $('dailyModal')) closeDailyRanks(); });
 window.addEventListener('keydown', (e) => { if (e.code === 'Escape' && isOpen('dailyModal')) closeDailyRanks(); });
 
-window.INchaseDaily = {
-  isLoggedIn: dailyOk,
-  status: dailyStatus,
-  submit: submitDaily,
-  openRanks: openDailyRanks,
-  openLogin: openWelcome
-};
 
 log('auth.js ready');
+
+// What the game receives in the handshake (hoisted, so it exists when the handshake runs at the top of the file)
+function authApiForGame() {
+  return {
+    schedulePush,
+    isLoggedIn: () => dailyOk(),      // arrow wrappers: dailyOk / authBusy are consts defined later in this file
+    status: dailyStatus,
+    submit: submitDaily,
+    openRanks: openDailyRanks,
+    openLogin: openWelcome,
+    findRival,
+    isBusy: () => authBusy()
+  };
+}
