@@ -1,0 +1,133 @@
+/* =====================================================================
+   INchase — responsiveness.css
+   Loads AFTER the inline <style> in index.html and only changes layout
+   on phones / tablets (html.mob, set by the game itself). Desktop is
+   untouched, except for dvh-safe heights which equal vh on desktop.
+   ===================================================================== */
+
+/* ---------- 0. Dynamic-viewport-safe heights (no visual change on desktop) ---------- */
+@supports (height: 100dvh) {
+  :root { --arena-h: clamp(220px, calc(100dvh - 410px), 415px); }
+  @media (min-height: 640px) { html:not(.mob) body { height: 100dvh; } }
+}
+
+/* ---------- 1. Foundation: notch / home-bar safe areas, no overscroll ---------- */
+html.mob, html.mob body { overscroll-behavior: none; }
+.mob body {
+  padding-top:    max(6px, env(safe-area-inset-top, 0px));
+  padding-right:  max(6px, env(safe-area-inset-right, 0px));
+  padding-bottom: max(6px, env(safe-area-inset-bottom, 0px));
+  padding-left:   max(6px, env(safe-area-inset-left, 0px));
+}
+/* iOS zooms the page when a field under 16px gets focus */
+.mob input, .mob textarea, .mob .name-input, .mob .name-input.sm { font-size: 16px; }
+
+/* ---------- 2. Control strip: mode buttons get their own full row (portrait) ---------- */
+.mob #strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.mob #modeBar {
+  grid-column: 1 / -1; margin: 0;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
+}
+.mob #strip button { min-height: 32px; align-items: center; justify-content: center; }
+.mob #strip #crtToggleBtn { display: none; }
+
+/* ---------- 3. Portrait phones: shrink the chrome as the screen gets shorter ---------- */
+@media (max-height: 780px) {
+  .mob:not(.land) { --joy: 108px; }
+  .mob:not(.land) #appMain { padding: 6px; gap: 6px; }
+  .mob:not(.land) .app-head { padding-bottom: 4px; }
+  .mob:not(.land) .app-logo { width: 30px; height: 30px; }
+  .mob:not(.land) #strip, .mob:not(.land) #modeBar { gap: 5px; }
+  .mob:not(.land) #strip button { min-height: 30px; padding: 4px 2px; }
+  .mob:not(.land) .board { padding: 4px 10px; }
+  .mob:not(.land) #hudScore { font-size: 26px; }
+  .mob:not(.land) #stage { gap: 6px; }
+  .mob:not(.land) #deck { padding: 6px; row-gap: 6px; }
+  .mob:not(.land) #actionBtns button { padding: 12px 4px; }
+}
+@media (max-height: 640px) {
+  .mob:not(.land) { --joy: 92px; }
+  .mob:not(.land) .app-foot { display: none; }
+  .mob:not(.land) #ctrlToggleBtn { padding: 2px 8px; font-size: 9px; }
+  .mob:not(.land) #actionBtns button { padding: 9px 4px; font-size: 12px; }
+}
+@media (max-height: 540px) {
+  .mob:not(.land) { --joy: 80px; }
+  .mob:not(.land) .app-title { display: none; }
+}
+@media (max-width: 350px) {
+  .mob .app-title { font-size: 16px; }
+  .mob #strip button { font-size: 9px; }
+  .mob #bestBtn { padding: 0 8px; }
+}
+
+/* ---------- 4. Phones held sideways ---------- */
+.mob.land #appMain { max-width: 1180px; }
+.mob.land #strip { justify-content: flex-start; flex-wrap: nowrap; gap: 6px; min-width: 0; overflow-x: auto; padding: 0 4px 4px 0; scrollbar-width: none; }
+.mob.land #strip::-webkit-scrollbar { display: none; }
+.mob.land #modeBar { display: flex; flex-wrap: nowrap; gap: 6px; margin: 0 auto 0 0; }
+.mob.land #strip button { flex: 0 0 auto; white-space: nowrap; min-height: 30px; }
+.mob.land .app-head { flex-wrap: nowrap; }
+@media (max-width: 760px) { .mob.land .app-title { display: none; } }
+@media (max-width: 640px) { .mob.land #themeToggleBtn, .mob.land .app-logo { display: none; } }
+@media (max-height: 460px) {
+  .mob.land { --joy: 84px; --side: clamp(104px, 16vw, 150px); }
+  .mob.land #appMain { grid-template-rows: auto minmax(0, 1fr); padding: 5px 8px; gap: 5px; }
+  .mob.land .app-foot { display: none; }
+  .mob.land .app-logo { width: 30px; height: 30px; }
+  .mob.land #strip button { padding: 4px 8px; font-size: 9px; min-height: 28px; }
+  .mob.land .board { padding: 4px 6px; gap: 3px; }
+  .mob.land #hudScore { font-size: 22px; }
+  .mob.land .board-mobile { gap: 3px; }
+  .mob.land .board-mobile .nb-pill { font-size: 8px; padding: 1px 5px; }
+  .mob.land #ctrlToggleBtn { padding: 2px 6px; font-size: 8px; }
+  .mob.land #actionBtns { gap: 6px; }
+  .mob.land #actionBtns button { padding: 8px 4px; font-size: 12px; }
+}
+
+/* ---------- 5. Tablets (iPad / Android tablets) ---------- */
+@media (min-width: 700px) {
+  .mob:not(.land) { --joy: 148px; }
+  .mob:not(.land) #appMain { max-width: 840px; padding: 14px; gap: 12px; }
+  .mob:not(.land) .app-title { font-size: 30px; }
+  .mob:not(.land) .app-logo { width: 44px; height: 44px; }
+  .mob:not(.land) #strip { gap: 10px; }
+  .mob:not(.land) #modeBar { gap: 10px; }
+  .mob:not(.land) #strip button { min-height: 44px; font-size: 13px; }
+  .mob:not(.land) #bestBtn, .mob:not(.land) #infoBtn, .mob:not(.land) #accountBtnM { height: 42px; }
+  .mob:not(.land) #infoBtn, .mob:not(.land) #accountBtnM { width: 42px; }
+  .mob:not(.land) #hudScore { font-size: 40px; }
+  .mob:not(.land) .board-mobile .nb-pill { font-size: 12px; }
+  .mob:not(.land) #deck { padding: 12px; }
+  .mob:not(.land) #actionBtns button { font-size: 16px; padding: 22px 6px; }
+  .mob:not(.land) #ctrlToggleBtn { font-size: 11px; padding: 6px 12px; }
+  .mob:not(.land) .app-foot > span:first-of-type { font-size: 11px; }
+}
+@media (min-width: 900px) and (min-height: 560px) {
+  .mob.land { --joy: 140px; --side: clamp(170px, 18vw, 240px); }
+  .mob.land #appMain { padding: 12px; gap: 10px; }
+  .mob.land #strip button { font-size: 12px; padding: 8px 12px; min-height: 40px; }
+  .mob.land #hudScore { font-size: 34px; }
+  .mob.land .board-mobile .nb-pill { font-size: 11px; }
+  .mob.land #actionBtns button { font-size: 16px; }
+  .mob.land .app-title { font-size: 26px; }
+  .mob.land #touchDashBtn { max-height: 260px; }
+}
+
+/* Result card inside the arena: scrolls on very short screens, without a visible scrollbar */
+.mob #canvasOverlay { scrollbar-width: none; overscroll-behavior: contain; }
+.mob #canvasOverlay::-webkit-scrollbar { display: none; }
+
+/* ---------- 6. Dialogs: fit the visible screen, keyboard + notch aware ---------- */
+.mob [id$="Modal"] {
+  padding-top:    max(12px, env(safe-area-inset-top, 0px));
+  padding-right:  max(12px, env(safe-area-inset-right, 0px));
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+  padding-left:   max(12px, env(safe-area-inset-left, 0px));
+  overscroll-behavior: contain;
+}
+.mob .auth-modal { top: var(--vv-top, 0px); bottom: auto; height: var(--app-h, 100%); }
+.mob [id$="Modal"] > div { max-height: 100%; overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+@media (max-height: 460px) {
+  .mob [id$="Modal"] { align-items: flex-start; padding-top: max(6px, env(safe-area-inset-top, 0px)); padding-bottom: 6px; }
+}
