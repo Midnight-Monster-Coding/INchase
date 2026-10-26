@@ -344,7 +344,9 @@
     .mob #crtToggleBtn { display: none; }
     /* Compact footer on phones: just "Developed by IAB" (the account button lives in the header) */
     .mob .app-foot { display: flex; justify-content: center; align-items: center; padding-top: 4px; border-top-width: 3px; }
-    .mob .app-foot #accountChip, .mob .app-foot > span:last-child { display: none; }
+    .mob .app-foot #accountChip { display: none; }
+    .mob .app-foot > span:last-child { margin-left: 10px; }
+    .mob .app-foot #downloadBtn { padding: 4px 8px; font-size: 10px; }
     .mob .app-foot > span:first-of-type { font-size: 9px; letter-spacing: 0.16em; line-height: 1; }
     .mob .app-foot .iab-link { padding: 4px 6px; }
 
@@ -823,7 +825,7 @@
         <span id="chipName">LOGIN</span>
       </button>
       <span class="text-[11px] tracking-[0.2em] uppercase t-ink text-center">Developed by <button id="iabLink" type="button" class="iab-link" title="See more creations by IAB" aria-haspopup="dialog">IAB</button></span>
-      <span></span>
+      <span class="justify-self-end"><button id="downloadBtn" type="button" class="retro-key c-lime px-3 py-1.5 rounded-lg text-xs" title="Get the INchase app" aria-haspopup="dialog">↓ DOWNLOAD</button></span>
     </footer>
 
   </main>
@@ -916,6 +918,31 @@
       <p class="text-[10px] tracking-widest opacity-70 mb-5">MORE WEB APPS BY THE SAME DEVELOPER</p>
       <ul id="creationsList" class="creations-list"></ul>
       <button id="creationsCloseBtn" type="button" class="retro-key retro-key-active w-full mt-6 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- GET THE APP: opens from the DOWNLOAD button in the footer. Logos: put ms-store.png and android.png (PNG, ~96x96) next to index.html. -->
+  <div id="downloadModal" class="auth-modal hidden fixed inset-0 z-[55] flex items-center justify-center p-5 bg-black/80" role="dialog" aria-modal="true" aria-labelledby="downloadTitle">
+    <div class="max-w-sm w-full retro-chassis rounded-2xl p-6 text-center">
+      <h2 id="downloadTitle" class="text-xl mb-1 t-ink" style="text-shadow: 2px 2px 0 var(--lime);">GET THE APP</h2>
+      <p class="text-[10px] tracking-widest opacity-70 mb-5">PLAY INCHASE ON YOUR DEVICE</p>
+      <ul class="creations-list">
+        <li>
+          <a id="dlMicrosoft" class="creation-row retro-key c-white" href="https://apps.microsoft.com/detail/9N5ZWLFPG2RZ?hl=en&amp;gl=IN&amp;ocid=pdpshare" target="_blank" rel="noopener noreferrer" aria-label="Get INchase on the Microsoft Store">
+            <img class="creation-logo" src="ms-store.png" alt="" width="52" height="52" decoding="async" draggable="false" style="object-fit:contain;padding:6px;background:#fff" onerror="this.style.display='none'" />
+            <span class="creation-name">MICROSOFT STORE</span>
+            <span class="creation-go" aria-hidden="true">↗</span>
+          </a>
+        </li>
+        <li>
+          <a id="dlAndroid" class="creation-row retro-key c-white" href="/INchase.apk" download="INchase.apk" aria-label="Download INchase for Android">
+            <img class="creation-logo" src="android.png" alt="" width="52" height="52" decoding="async" draggable="false" style="object-fit:contain;padding:6px;background:#fff" onerror="this.style.display='none'" />
+            <span class="creation-name">DOWNLOAD IN ANDROID</span>
+            <span class="creation-go" aria-hidden="true">↓</span>
+          </a>
+        </li>
+      </ul>
+      <button id="downloadCloseBtn" type="button" class="retro-key retro-key-active w-full mt-6 py-2.5 px-6 rounded-xl text-sm">CLOSE</button>
     </div>
   </div>
 
@@ -4103,6 +4130,36 @@
       modal.addEventListener('click', (e) => { if (e.target === modal) closeCreations(); });
       window.addEventListener('keydown', (e) => {
         if (e.code === 'Escape' && !modal.classList.contains('hidden')) { e.preventDefault(); closeCreations(); }
+      });
+    })();
+  </script>
+
+  <!-- ==================== DOWNLOAD (GET THE APP) POPUP ==================== -->
+  <script>
+    (function () {
+      'use strict';
+      const modal = document.getElementById('downloadModal');
+      const openBtn = document.getElementById('downloadBtn');
+      const closeBtn = document.getElementById('downloadCloseBtn');
+      if (!modal || !openBtn || !closeBtn) return;
+
+      function openDownload() {
+        window.dispatchEvent(new Event('inchase-pause'));   // same pause behaviour as the other popups
+        modal.classList.remove('hidden');
+        closeBtn.focus({ preventScroll: true });
+      }
+      function closeDownload() {
+        modal.classList.add('hidden');
+        openBtn.focus({ preventScroll: true });
+      }
+
+      openBtn.addEventListener('click', openDownload);
+      closeBtn.addEventListener('click', closeDownload);
+      modal.addEventListener('click', (e) => { if (e.target === modal) closeDownload(); });
+      // Both options are plain links (Store opens a new tab, APK starts the download); close the popup once one is used
+      modal.querySelectorAll('a').forEach((a) => a.addEventListener('click', () => setTimeout(closeDownload, 300)));
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Escape' && !modal.classList.contains('hidden')) { e.preventDefault(); closeDownload(); }
       });
     })();
   </script>

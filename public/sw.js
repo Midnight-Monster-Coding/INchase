@@ -65,6 +65,9 @@ self.addEventListener('fetch', (event) => {
   // Firebase auth handler / email-link pages (/__/auth/..., /__/firebase/...): never touch them, never cache them
   if (sameOrigin && url.pathname.startsWith('/__/')) return;
 
+  // The Android APK download (3+ MB): straight to the network, never cached, and never stored as the cached home page
+  if (sameOrigin && url.pathname.endsWith('.apk')) return;
+
   // Page loads: network first, cache fallback
   if (req.mode === 'navigate') {
     event.respondWith(
