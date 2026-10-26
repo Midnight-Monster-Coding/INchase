@@ -32,7 +32,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 import {
   getDatabase, ref as dbRef, push as dbPush, set as dbSet, remove as dbRemove,
-  onValue as dbOnValue, onDisconnect as dbOnDisconnect
+  onValue as dbOnValue, onDisconnect as dbOnDisconnect, goOffline as dbGoOffline, goOnline as dbGoOnline
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-database.js";
 import { firebaseConfig } from "./firebase-config.js";
 
@@ -814,12 +814,33 @@ function startPresence() {
       snap.forEach((child) => { if (child.hasChildren()) Online.add(child.key); });
       applyOnline();
     }, (err) => console.warn('[auth] presence read failed', err));
+    sweepOrphans(uid);   // remove any mark an earlier sign-out / network drop failed to delete
   } catch (e) {
     console.warn('[auth] presence unavailable', e);
   }
 }
 
+// Marks whose removal was NOT confirmed by the server (offline sign-out, token already gone...).
+// They are remembered on this device and deleted the next time this account is signed in.
+const ORPHAN_KEY = 'inchase_presence_orphans_v1';
+function orphanList() { try { const a = JSON.parse(lsGet(ORPHAN_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } }
+function orphanSave(a) { if (a.length) lsSet(ORPHAN_KEY, JSON.stringify(a.slice(-20))); else lsDel(ORPHAN_KEY); }
+function orphanAdd(path) { const a = orphanList(); if (!a.includes(path)) { a.push(path); orphanSave(a); } }
+function orphanDrop(path) { orphanSave(orphanList().filter((x) => x !== path)); }
+function sweepOrphans(uid) {
+  if (!rtdb) return;
+  orphanList().filter((path) => path.startsWith('status/' + uid + '/')).forEach((path) => {
+    dbRemove(dbRef(rtdb, path)).then(() => orphanDrop(path)).catch((e) => console.warn('[auth] orphan sweep failed', e));
+  });
+}
+// Makes the server notice this client is gone, so it runs the onDisconnect cleanup we registered earlier.
+function bounceRealtime() {
+  if (!rtdb) return;
+  try { dbGoOffline(rtdb); setTimeout(() => { try { dbGoOnline(rtdb); } catch (e) { /* ignore */ } }, 1500); } catch (e) { /* ignore */ }
+}
+
 // Goes offline. Called BEFORE signOut(): after sign-out the rules would no longer let us delete our mark.
+// Returns true when the server confirmed the mark is gone.
 async function stopPresence() {
   const c = Presence.conn;
   if (Presence.unsubInfo) { try { Presence.unsubInfo(); } catch (e) { /* ignore */ } Presence.unsubInfo = null; }
@@ -828,12 +849,21 @@ async function stopPresence() {
   Presence.uid = null;
   Online.clear();
   applyOnline();
-  if (!c) return;
+  if (!c) return true;
+  let confirmed = false;
   try {
-    // offline: do not hold up the sign-out waiting for the server (the onDisconnect cleanup still covers us)
-    await Promise.race([dbRemove(c), new Promise((res) => setTimeout(res, 2000))]);
-  } catch (e) { /* ignore */ }
-  try { dbOnDisconnect(c).cancel().catch(() => {}); } catch (e) { /* ignore */ }
+    // offline: do not hold up the sign-out waiting for the server
+    confirmed = await Promise.race([dbRemove(c).then(() => true), new Promise((res) => setTimeout(() => res(false), 2000))]);
+  } catch (e) { confirmed = false; }   // e.g. permission denied because we are already signed out
+  if (confirmed) {
+    // Only now is it safe to drop the server-side cleanup. If the remove was NOT confirmed we KEEP the onDisconnect
+    // (cancelling it here is what used to leave a user "online" forever) and remember the mark for a later sweep.
+    try { dbOnDisconnect(c).cancel().catch(() => {}); } catch (e) { /* ignore */ }
+  } else {
+    try { orphanAdd('status/' + c.parent.key + '/' + c.key); } catch (e) { /* ignore */ }
+    bounceRealtime();
+  }
+  return confirmed;
 }
 
 // Green glow on every online player's avatar (leaderboard rows, footer chip, account photo) + the online counter
