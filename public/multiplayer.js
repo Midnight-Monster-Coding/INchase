@@ -946,7 +946,8 @@ function beginEngine(M) {
     seed: M.seed, startPerf: M.startPerf, selfColor: '#38BDF8',
     draw: (c, w, h, st) => drawMP(M, c, w, h, st),
     onEnd: (ev) => onEngineEnd(M, ev),
-    onClaim: (cl) => { if (Z.match === M && M.orb) M.orb.localClaim(cl.n, cl.c); }
+    onClaim: (cl) => { if (Z.match === M && M.orb) M.orb.localClaim(cl.n, cl.c); },
+    host: M.role === 'host'      // the host's orb is hunted by the even-numbered drones, the guest's by the odd ones
   });
   M.phase = 'run';
   showHud(M);
@@ -1240,6 +1241,7 @@ function drawMP(M, ctx, W, H, state) {
     dashNow = !!(p && p.s && p.s.dash);        // the flag of the sample being drawn (the orb is ~110 ms behind the newest packet)
   }
   if (R.dead) dashNow = false;
+  bridge.setRival(p ? p.x : 0, p ? p.y : 0, !!(p && !M.ghost && !R.dead && !R.gone && clock >= 0));   // the engine makes the rival solid and hunts it
   const nowMs = performance.now();
   trailStep(R, p, dashNow, nowMs);
   if (p && !R.dead) drawTail(ctx, R, dashNow, nowMs);

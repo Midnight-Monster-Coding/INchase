@@ -1225,11 +1225,13 @@
       // MULTIPLAYER state (the logic is in section 10b; multiplayer.js drives it through a private handshake)
       const MP_W = 800, MP_H = 450, MP_SEC = 90, MP_SURGE = 75, MP_COUNT = 3;
       const MP_FIX = 1 / 120;   // fixed step of the shared drone world (seconds)
+      const MP_HUNT = 60;       // last 30 s: drones hunt the players, the orb roams
       const MPX = {
         active: false, fixed: false, starting: false, frozen: false, dead: false, timeUp: false,
         s: 1, ox: 0, oy: 0, seed: 0, startPerf: 0, clockT: -MP_COUNT, wi: 1, si: 0, sched: null,
         self: '#4ADE80', prevMode: 'arcade', draw: null, onEnd: null, onClaim: null,
-        wStep: 0, hi: 0, ww: 1, wwi: 1, lure: null
+        wStep: 0, hi: 0, ww: 1, wwi: 1, lure: null,
+        isHost: false, rx: 0, ry: 0, rAlive: false, sparkT: 0, huntOn: false
       };
       // kind: 1 = spawn warning position, 2 = hazard type/speed/life, 3 = green target
       function streamRng(kind) {
@@ -2898,6 +2900,8 @@
           Player.vy = -Math.abs(Player.vy) * 0.5;
         }
 
+        if (MPX.active) mpRivalCollide(dt);
+
         trailHead = (trailHead + 1) & TRAIL_MASK;
         trailX[trailHead] = Player.x;
         trailY[trailHead] = Player.y;
@@ -3897,6 +3901,9 @@
         MPX.dead = false;
         MPX.timeUp = false;
         // shared drone world
+        MPX.huntOn = false;
+        MPX.sparkT = 0;
+        MPX.rAlive = false;
         MPX.wStep = 0;       // fixed steps simulated so far (world time = wStep * MP_FIX)
         MPX.hi = 0;          // next hazard of the schedule to spawn
         MPX.ww = 1;          // wave the world is in
@@ -3961,6 +3968,38 @@
           entK[id] = ev.k & 0xffff;
         }
       }
+      // The two orbs are solid to each other: no passing through. The speed into the rival is cancelled (with a small bounce)
+      // and a very small spark flies from the contact point. Only your own orb is moved, against where the rival is drawn.
+      function mpRivalCollide(dt) {
+        if (MPX.sparkT > 0) MPX.sparkT -= dt;
+        if (!MPX.rAlive || MPX.dead) return;
+        const minD = Player.radius + 11 + 1;   // both cores are 11 px
+        const dx = Player.x - MPX.rx;
+        const dy = Player.y - MPX.ry;
+        const d = Math.hypot(dx, dy);
+        if (d >= minD) return;
+        let nx, ny;
+        if (d < 0.001) { nx = -Math.cos(Player.faceAngle); ny = -Math.sin(Player.faceAngle); }
+        else { nx = dx / d; ny = dy / d; }
+        Player.x = Math.max(Player.radius, Math.min(arenaW - Player.radius, MPX.rx + nx * minD));
+        Player.y = Math.max(Player.radius, Math.min(arenaH - Player.radius, MPX.ry + ny * minD));
+        const vn = Player.vx * nx + Player.vy * ny;
+        if (vn < 0) { Player.vx -= 1.35 * vn * nx; Player.vy -= 1.35 * vn * ny; }
+        if (MPX.sparkT <= 0 && (vn < -40 || Player.dashT > 0)) {
+          MPX.sparkT = 0.12;
+          const cx = MPX.rx + nx * 11;
+          const cy = MPX.ry + ny * 11;
+          emitBurst(cx, cy, 5, 75, 3);
+          spawnShockwave(cx, cy, 16, 3);
+          Synth.tone(620, 'triangle', 0.05, 0.035, 380);
+        }
+      }
+      const _huntT = [0, 0];
+      function mpHuntTarget(i) {   // the orb this drone hunts: mine or the rival's (the rival's as it is drawn on this screen)
+        const mineTarget = ((entK[i] & 1) === 0) === MPX.isHost;
+        if (!mineTarget && MPX.rAlive) { _huntT[0] = MPX.rx; _huntT[1] = MPX.ry; }
+        else { _huntT[0] = Player.x; _huntT[1] = Player.y; }
+      }
       function mpHazardStep(t) {
         const h = MP_FIX;
         const L = MPX.lure;
@@ -3975,16 +4014,36 @@
             continue;
           }
           if (type === 1) {
-            // Seeker: steers toward a seeded roaming point (each seeker has its own phase), never toward a player
-            const o = entK[i] * 2.399963;
-            const lx = MP_W / 2 + Math.sin(t * L.fx + L.p1 + o) * L.ax;
-            const ly = MP_H / 2 + Math.sin(t * L.fy + L.p2 + o * 1.3) * L.ay;
-            const sx = lx - entX[i];
-            const sy = ly - entY[i];
+            if (t >= MP_HUNT) {
+              // LAST 30 s: seekers hunt a player. Even schedule index = the host's orb, odd = the guest's, so each orb gets half of them.
+              mpHuntTarget(i);
+              const sx = _huntT[0] - entX[i];
+              const sy = _huntT[1] - entY[i];
+              const slen = Math.hypot(sx, sy) || 1;
+              const desiredSpd = 135 + Math.min(MPX.ww * 6, 75);
+              entVX[i] += ((sx / slen) * desiredSpd - entVX[i]) * h * 2.2;
+              entVY[i] += ((sy / slen) * desiredSpd - entVY[i]) * h * 2.2;
+            } else {
+              // Seeker before that: steers toward a seeded roaming point (each seeker has its own phase), never toward a player
+              const o = entK[i] * 2.399963;
+              const lx = MP_W / 2 + Math.sin(t * L.fx + L.p1 + o) * L.ax;
+              const ly = MP_H / 2 + Math.sin(t * L.fy + L.p2 + o * 1.3) * L.ay;
+              const sx = lx - entX[i];
+              const sy = ly - entY[i];
+              const slen = Math.hypot(sx, sy) || 1;
+              const desiredSpd = 110 + Math.min(MPX.ww * 6, 75);
+              entVX[i] += ((sx / slen) * desiredSpd - entVX[i]) * h * 1.8;
+              entVY[i] += ((sy / slen) * desiredSpd - entVY[i]) * h * 1.8;
+            }
+          } else if (type === 0 && t >= MP_HUNT) {
+            // LAST 30 s: drifters bend toward their player too (gently, they keep their own speed)
+            mpHuntTarget(i);
+            const sx = _huntT[0] - entX[i];
+            const sy = _huntT[1] - entY[i];
             const slen = Math.hypot(sx, sy) || 1;
-            const desiredSpd = 110 + Math.min(MPX.ww * 6, 75);
-            entVX[i] += ((sx / slen) * desiredSpd - entVX[i]) * h * 1.8;
-            entVY[i] += ((sy / slen) * desiredSpd - entVY[i]) * h * 1.8;
+            const sp = Math.max(95, Math.hypot(entVX[i], entVY[i]));
+            entVX[i] += ((sx / slen) * sp - entVX[i]) * h * 0.9;
+            entVY[i] += ((sy / slen) * sp - entVY[i]) * h * 0.9;
           } else if (type === 4) {
             const wv = Math.cos(entPhase[i] * 0.55) * 2.4 * h;
             const wc = Math.cos(wv);
@@ -4010,6 +4069,13 @@
           entPY[i] = entY[i];
           entPAng[i] = hazardAngle(i);
         }
+        if (!MPX.huntOn && MPX.clockT >= MP_HUNT) {
+          MPX.huntOn = true;
+          Game.bannerText = 'FINAL 30 SECONDS';
+          Game.bannerSub = 'DRONES HUNT BOTH ORBS \u00B7 THE GREEN ORB ROAMS';
+          Game.bannerT = 2.8;
+          Synth.tone(110, 'sawtooth', 0.4, 0.08, 70);
+        }
         const target = Math.floor(MPX.clockT / MP_FIX);
         let guard = 0;
         while (MPX.wStep < target && guard++ < 1500) {   // 1500 steps = 12.5 s of catch-up per call (a hidden tab)
@@ -4029,7 +4095,7 @@
        * ------------------------------------------------------------------------------------------------------ */
       const ORB_MARGIN = 48;
       const ORB_MIN_JUMP = 170;   // the next orb is at least this far from the previous one (so the player who just took it can not re-take the next at once)
-      const ORB_SPEED = 60;
+      const ORB_SPEED = 70;
       const orbCache = [];
       const ORB = { n: 0, t0: 0, pend: [] };   // n = orb on the field, t0 = match clock when it appeared, pend = my unconfirmed claims
       function orbBase(n) {
@@ -4062,20 +4128,22 @@
         if (m < 0) m += 2 * len;
         return lo + (m <= len ? m : 2 * len - m);
       }
-      function orbMovesAt(t) {   // is the wave running at match time t a MOVING PRISM wave?
+      function orbMoveStart(t0) {   // match time from which an orb that appeared at t0 drifts
         const sc = MPX.sched;
-        if (!sc) return false;
-        let w = 1;
-        for (let i = 0; i < sc.waves.length && sc.waves[i].t <= t; i++) w = sc.waves[i].w;
-        const tw = TWISTS[sc.twistOf[w]];
-        return !!(tw && tw.prism);
+        if (sc) {
+          let w = 1;
+          for (let i = 0; i < sc.waves.length && sc.waves[i].t <= t0; i++) w = sc.waves[i].w;
+          const tw = TWISTS[sc.twistOf[w]];
+          if (tw && tw.prism) return t0;   // MOVING PRISM wave
+        }
+        return Math.max(t0, MP_HUNT);      // otherwise it sits still until the last 30 s, then it roams from where it is
       }
       const _orbOut = [0, 0];
       function orbPos(n, t0, t) {
         const b = orbBase(n);
-        if (!orbMovesAt(t0)) { _orbOut[0] = b[0]; _orbOut[1] = b[1]; return _orbOut; }
+        const e = t - orbMoveStart(t0);
+        if (!(e > 0)) { _orbOut[0] = b[0]; _orbOut[1] = b[1]; return _orbOut; }
         const ang = mulberry32(mixSeed(MPX.seed >>> 0, 4243, n))() * TWO_PI;
-        const e = Math.max(0, t - t0);
         _orbOut[0] = orbFold(b[0] + Math.cos(ang) * ORB_SPEED * e, 40, MP_W - 40);
         _orbOut[1] = orbFold(b[1] + Math.sin(ang) * ORB_SPEED * e, 40, MP_H - 40);
         return _orbOut;
@@ -4209,6 +4277,8 @@
           MPX.draw = cfg.draw || null;
           MPX.onEnd = cfg.onEnd || null;
           MPX.onClaim = cfg.onClaim || null;
+          MPX.isHost = !!cfg.host;
+          MPX.rAlive = false;
           MPX.clockT = (performance.now() - MPX.startPerf) / 1000;
           Game.mode = 'blitz';   // multiplayer uses Blitz rules (twists, boss wave); its results never touch the Blitz best
           hideDailyUI();
@@ -4247,6 +4317,7 @@
           MPX.draw = null;
           MPX.onEnd = null;
           MPX.onClaim = null;
+          MPX.rAlive = false;
           ORB.pend.length = 0;
           SEED.on = false;
           SEED.mp = false;
@@ -4278,6 +4349,8 @@
         orbVerdict: (n, mine, tWin) => mpOrbVerdict(n, !!mine, Number(tWin) || 0),
         orbPending: () => ORB.pend.length,
         orbCommit: () => { ORB.pend.length = 0; },
+        // where the rival orb is drawn right now (alive = solid + hunted); a ghost / practice rival is never solid
+        setRival: (x, y, alive) => { MPX.rx = Number(x) || 0; MPX.ry = Number(y) || 0; MPX.rAlive = !!alive; },
         tone: (f, type, d, g, slide) => Synth.tone(f, type, d, g, slide),
         initAudio: () => Synth.init(),
         toast: (m) => showToast(m),
