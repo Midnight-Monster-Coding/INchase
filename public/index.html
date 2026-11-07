@@ -1224,10 +1224,12 @@
       const SEED = { on: false, day: 0, spawnQ: 0, spawnH: 0, prism: 0, mp: false, k: 0 };
       // MULTIPLAYER state (the logic is in section 10b; multiplayer.js drives it through a private handshake)
       const MP_W = 800, MP_H = 450, MP_SEC = 90, MP_SURGE = 75, MP_COUNT = 3;
+      const MP_FIX = 1 / 120;   // fixed step of the shared drone world (seconds)
       const MPX = {
         active: false, fixed: false, starting: false, frozen: false, dead: false, timeUp: false,
         s: 1, ox: 0, oy: 0, seed: 0, startPerf: 0, clockT: -MP_COUNT, wi: 1, si: 0, sched: null,
-        self: '#4ADE80', prevMode: 'arcade', draw: null, onEnd: null
+        self: '#4ADE80', prevMode: 'arcade', draw: null, onEnd: null, onClaim: null,
+        wStep: 0, hi: 0, ww: 1, wwi: 1, lure: null
       };
       // kind: 1 = spawn warning position, 2 = hazard type/speed/life, 3 = green target
       function streamRng(kind) {
@@ -1257,6 +1259,7 @@
       const entGrazeCooldown = new Float32Array(MAX_ENTITIES);
       const entGrazeCount = new Uint8Array(MAX_ENTITIES); // point-scoring grazes used on this enemy
       const entLife = new Float32Array(MAX_ENTITIES);     // hazard seconds left (shards ignore it)
+      const entK = new Uint16Array(MAX_ENTITIES);         // multiplayer: schedule index of a hazard (gives each seeker its own lure offset)
       // Spawn warnings: a hazard appears at its marker after SPAWN_WARN seconds
       const MAX_PEND = 16;
       const SPAWN_WARN = 0.6;
@@ -1287,6 +1290,7 @@
         entGrazeCooldown[id] = 0;
         entGrazeCount[id] = 0;
         entLife[id] = 0;
+        entK[id] = 0;
         entPAng[id] = hazardAngle(id);
         return id;
       }
@@ -1306,6 +1310,7 @@
           entGrazeCooldown[id] = entGrazeCooldown[last];
           entGrazeCount[id] = entGrazeCount[last];
           entLife[id] = entLife[last];
+          entK[id] = entK[last];
           entPAng[id] = entPAng[last];
         }
       }
@@ -2516,6 +2521,7 @@
         // Arcade stays plain. Blitz gets a new random twist every wave, starting with wave 1.
         if (Game.mode !== 'blitz') return TWISTS[0];
         if (SEED.mp) {   // multiplayer: the twist of wave w is the same for both players
+          if (MPX.sched && MPX.sched.twistOf[w]) return TWISTS[MPX.sched.twistOf[w]];
           const n = 1 + (mixSeed(SEED.day, 77, w) % (TWISTS.length - 1));
           let tw = TWISTS[n];
           if (tw === Game.twist) tw = TWISTS[1 + (n % (TWISTS.length - 1))];
@@ -2533,7 +2539,7 @@
         Game.bannerText = Game.bossPending ? 'BOSS WAVE' : Game.twist.name;
         Game.bannerSub = 'WAVE ' + w + (Game.bossPending && Game.twist.name ? ' \u00B7 ' + Game.twist.name : '');
         Game.bannerT = (Game.mode === 'blitz' && Game.bannerText) ? 2.2 : 0;
-        if (Game.twist.prism) {
+        if (Game.twist.prism && !MPX.active) {
           const ang = (SEED.mp ? mulberry32(mixSeed(SEED.day, 78, w))() : Math.random()) * Math.PI * 2;
           Prism.vx = Math.cos(ang) * 60;
           Prism.vy = Math.sin(ang) * 60;
@@ -2719,7 +2725,7 @@
         // New-best freeze (timer runs down in loop())
         if (Game.pbFreeze > 0) return;
         // Hit-stop: a very short freeze on shield loss or 3+ shatters
-        if (Game.hitStop > 0) { Game.hitStop -= dt; return; }
+        if (Game.hitStop > 0) { if (MPX.active) Game.hitStop = 0; else { Game.hitStop -= dt; return; } }   // multiplayer: the match clock never stops
         if (Game.mode === 'blitz' && !MPX.active) {
           Game.blitzTimeLeft -= dt;
           if (Game.blitzTimeLeft <= 0) {
@@ -2730,7 +2736,9 @@
         }
 
         // Slow-motion save: once per wave, at 0 shields, when a drone is about to touch you
-        if (Game.slowT > 0) {
+        if (MPX.active) {
+          Game.slowT = 0;   // multiplayer: the world runs on the match clock, so there is no personal slow motion
+        } else if (Game.slowT > 0) {
           Game.slowT -= dt;
           dt *= 0.35;
         } else if (Game.shields === 0 && !Game.slowUsed && Game.mode !== 'zen' && Player.invulnTimer <= 0 && Game.overdriveTimer <= 0) {
@@ -2750,7 +2758,7 @@
           pendT[p] -= dt;
           if (pendT[p] <= 0) {
             if (SEED.mp) SEED.k = pendK[p];
-            spawnHazardAt(pendX[p], pendY[p], pendBoss[p]);
+            if (!MPX.active) spawnHazardAt(pendX[p], pendY[p], pendBoss[p]);   // multiplayer: the shared world spawns it (mpWorldAdvance), this is only the warning marker
             const last = --pendCount;
             if (p !== last) { pendX[p] = pendX[last]; pendY[p] = pendY[last]; pendT[p] = pendT[last]; pendBoss[p] = pendBoss[last]; pendK[p] = pendK[last]; }
           }
@@ -2927,7 +2935,11 @@
 
         // Check Green Prism Pickup (100 × multiplier, multiplier capped at ×8)
         Prism.angle += dt * 2.4;
-        if (Prism.vx || Prism.vy) {
+        if (MPX.active) {
+          const op = orbPos(ORB.n, ORB.t0, MPX.clockT);
+          Prism.x = op[0];
+          Prism.y = op[1];
+        } else if (Prism.vx || Prism.vy) {
           Prism.x += Prism.vx * dt;
           Prism.y += Prism.vy * dt;
           if (Prism.x < 40) { Prism.x = 40; Prism.vx = Math.abs(Prism.vx); }
@@ -2941,6 +2953,8 @@
         // Swept: counts if the core passed through the pickup zone at any point this step
         if (prismLockT <= 0 && ptSegDist(Prism.x, Prism.y, prevPX, prevPY, Player.x, Player.y) <= pickupDist) {
           prismLockT = 0.15;
+          const mpMulBefore = Game.multiplier;
+          const mpScoreBefore = Game.score;
           const prismPts = 100 * Game.multiplier; // multiplier applies to green targets only
           Game.multiplier = Math.min(8, Game.multiplier + 1);
           if (Game.multiplier > Game.peakMultiplier) {
@@ -2954,16 +2968,21 @@
           Synth.playPrism(Game.multiplier);
           spawnShockwave(Prism.x, Prism.y, 70, 1);
           emitBurst(Prism.x, Prism.y, 16, 180, 1);
-          relocatePrism();
+          if (MPX.active) mpOrbClaimed(mpMulBefore, mpScoreBefore); else relocatePrism();   // multiplayer: the orb is shared, the host decides who got it
         }
 
-        // Update Entities
+        // Update Entities (multiplayer: first advance the shared drone world to the current match clock)
+        if (MPX.active) mpWorldAdvance();
         const hazardTimeScale = Game.overdriveTimer > 0 ? 0.42 : 1.0;
         const magnetRadius = Game.overdriveTimer > 0 ? 280 : 140;
         const magnetR2 = magnetRadius * magnetRadius;
 
         for (let i = entCount - 1; i >= 0; i--) {
           const type = entType[i];
+          if (MPX.active && type !== 3) {   // shared world: hazards are moved by mpWorldAdvance() on the match clock, not here
+            if (entGrazeCooldown[i] > 0) entGrazeCooldown[i] = Math.max(0, entGrazeCooldown[i] - dt);
+            continue;
+          }
           entPX[i] = entX[i];
           entPY[i] = entY[i];
           entPAng[i] = hazardAngle(i);
@@ -3019,7 +3038,7 @@
 
           clampEntityToArena(i);
           // The green prism is solid: red shapes bounce off its edge instead of ghosting through it
-          if (type !== 3 && bounceHazardOffCircle(i, Prism.x, Prism.y, PRISM_SOLID_R, Prism.vx || 0, Prism.vy || 0, 1)) {
+          if (!MPX.active && type !== 3 && bounceHazardOffCircle(i, Prism.x, Prism.y, PRISM_SOLID_R, Prism.vx || 0, Prism.vy || 0, 1)) {
             clampEntityToArena(i);
           }
         }
@@ -3100,7 +3119,7 @@
             }
           } else {
             // Invulnerable (just hit / dash tail): no damage, but the body is still solid
-            if (bounceHazardOffCircle(id, Player.x, Player.y, playerBodyRadius() + 0.02, Player.vx, Player.vy, 0.8)) {
+            if (!MPX.active && bounceHazardOffCircle(id, Player.x, Player.y, playerBodyRadius() + 0.02, Player.vx, Player.vy, 0.8)) {
               clampEntityToArena(id);
             }
           }
@@ -3688,7 +3707,7 @@
         Game.spawnGap = 0.2;
         Game.dashHit = false;
         Game.dashPending = false;
-        relocatePrism();
+        if (MPX.active) { const op0 = orbPos(0, 0, 0); Prism.x = op0[0]; Prism.y = op0[1]; } else relocatePrism();   // multiplayer: orb #0 of the seeded sequence, the same for both
 
         UI.canvasOverlay.classList.add('hidden');
         UI.pauseGameBtn.disabled = false;
@@ -3824,20 +3843,43 @@
        *      same field (800x450), same spawn schedule on the same clock, same twists.
        * ========================================================================= */
       // Waves are scheduled by time, not by "how many hazards are alive", so both devices spawn spawn #k at the same moment.
-      function buildMpSchedule() {
+      // The schedule also fixes everything a spawn needs (wave, twist, border position), so a hazard is a pure function of
+      // (seed, k): it never looks at either player.
+      function mpTwistIndex(seed, w, prevIdx) {
+        const n = 1 + (mixSeed(seed, 77, w) % (TWISTS.length - 1));
+        return n === prevIdx ? 1 + (n % (TWISTS.length - 1)) : n;
+      }
+      function buildMpSchedule(seed) {
         const waves = [];
         const spawns = [];
+        const twistOf = [0];
         let t = 0.5;
         let k = 0;
+        let prevTw = 0;
         for (let w = 1; t < MP_SEC + 5; w++) {
+          const tw = mpTwistIndex(seed, w, prevTw);
+          twistOf[w] = tw;
+          prevTw = tw;
           waves.push({ t, w });
           const gap = Math.max(0.55, Math.min(1.6, 7.2 / hazardCapFor(w)));
           let st = t + 0.3;
-          if (w % 5 === 0) { spawns.push({ t: st, k: k++, boss: true }); st += gap; }
-          for (let i = 0, n = waveBudgetFor(w); i < n; i++) { spawns.push({ t: st, k: k++, boss: false }); st += gap; }
+          const add = (boss) => {
+            const rng = mulberry32(mixSeed(seed * 7919 + 12345, 1, k));   // spawn warning position (same stream the single-player seeded modes use)
+            const edge = (rng() * 4) | 0;
+            let x, y;
+            if (edge === 0) { x = rng() * MP_W; y = 20; }
+            else if (edge === 1) { x = MP_W - 20; y = rng() * MP_H; }
+            else if (edge === 2) { x = rng() * MP_W; y = MP_H - 20; }
+            else { x = 20; y = rng() * MP_H; }
+            spawns.push({ t: st, ts: st + SPAWN_WARN, k, boss, w, tw, x, y });
+            k++;
+            st += gap;
+          };
+          if (w % 5 === 0) add(true);
+          for (let i = 0, n = waveBudgetFor(w); i < n; i++) add(false);
           t = st + SPAWN_WARN + CALM_TIME;
         }
-        return { waves, spawns };
+        return { waves, spawns, twistOf };
       }
       function mpSeedBegin() {
         SEED.on = true;
@@ -3848,29 +3890,246 @@
         SEED.prism = 0;
         SEED.k = 0;
         Game.twist = null;   // wave 1 must not depend on the previous match
-        MPX.sched = buildMpSchedule();
+        MPX.sched = buildMpSchedule(MPX.seed >>> 0);
         MPX.wi = 1;          // wave 1 is started by startNewRun itself
         MPX.si = 0;
         MPX.frozen = false;
         MPX.dead = false;
         MPX.timeUp = false;
+        // shared drone world
+        MPX.wStep = 0;       // fixed steps simulated so far (world time = wStep * MP_FIX)
+        MPX.hi = 0;          // next hazard of the schedule to spawn
+        MPX.ww = 1;          // wave the world is in
+        MPX.wwi = 1;
+        const lr = mulberry32(mixSeed(MPX.seed >>> 0, 55, 0));
+        MPX.lure = { fx: 0.42 + lr() * 0.25, fy: 0.55 + lr() * 0.3, p1: lr() * TWO_PI, p2: lr() * TWO_PI, ax: 300, ay: 150 };
+        // shared orb
+        orbCache.length = 0;
+        ORB.n = 0;
+        ORB.t0 = 0;
+        ORB.pend.length = 0;
       }
-      function mpQueueSpawn(ev) {
+      function mpQueueSpawn(ev) {   // only the warning marker: the hazard itself is spawned by the world at ev.ts
         if (pendCount >= MAX_PEND) return;
-        SEED.k = ev.k;
-        const rng = streamRng(1);
-        const edge = (rng() * 4) | 0;
-        let x, y;
-        if (edge === 0) { x = rng() * arenaW; y = 20; }
-        else if (edge === 1) { x = arenaW - 20; y = rng() * arenaH; }
-        else if (edge === 2) { x = rng() * arenaW; y = arenaH - 20; }
-        else { x = 20; y = rng() * arenaH; }
-        pendX[pendCount] = x;
-        pendY[pendCount] = y;
+        pendX[pendCount] = ev.x;
+        pendY[pendCount] = ev.y;
         pendT[pendCount] = SPAWN_WARN;
         pendBoss[pendCount] = ev.boss ? 1 : 0;
         pendK[pendCount] = ev.k;
         pendCount++;
+      }
+
+      /* ---- SHARED DRONE WORLD ------------------------------------------------------------------------------
+       * Every hazard is simulated in FIXED steps of MP_FIX seconds counted from match second 0, whatever the frame rate,
+       * and nothing a player does can change a hazard's path:
+       *   - spawn time, place, type, speed, life come from the schedule + the seed
+       *   - seekers chase a seeded roaming lure point, not a player
+       *   - no hit-stop, slow motion, Ghost Drive slow-down, or bounce off the player / the orb
+       * A player's own contacts (shield hit, dash shatter) only remove or convert THAT hazard in THAT player's arrays.
+       * ------------------------------------------------------------------------------------------------------ */
+      function mpSpawnHazard(ev) {
+        const rng = mulberry32(mixSeed(SEED.day * 7919 + 12345, 2, ev.k));   // same stream layout as spawnHazardAt in the seeded modes
+        const angle = rng() * Math.PI * 2;
+        if (ev.boss) {
+          const bid = spawnEntity(2, ev.x, ev.y, Math.cos(angle) * 45, Math.sin(angle) * 45, 24);
+          if (bid >= 0) {
+            entLife[bid] = 14;
+            entPhase[bid] = rng() * 6.28318;   // seeded, so the boss silhouette is rotated the same on both screens
+            entPAng[bid] = hazardAngle(bid);
+            entK[bid] = ev.k & 0xffff;
+          }
+          return;
+        }
+        const tw = TWISTS[ev.tw] || TWISTS[0];
+        const type = pickType(tw.mix, rng);
+        const w = ev.w;
+        let r;
+        let spd;
+        if (type === 0) { r = 11; spd = 95 + Math.min(w * 8, 90); }
+        else if (type === 1) { r = 11; spd = 85 + Math.min(w * 7, 80); }
+        else if (type === 2) { r = 13; spd = 60; }
+        else if (type === 4) { r = 10; spd = 105 + Math.min(w * 6, 70); }
+        else if (type === 5) { r = 19 + rng() * 8; spd = 38; }
+        else { r = 6 + rng() * 2.5; spd = 200 + Math.min(w * 6, 60); }
+        if (type === 0 || type === 1 || type === 4) r *= 0.85 + rng() * 0.35;   // size variety (multiplayer uses Blitz rules)
+        spd *= tw.spd;
+        const id = spawnEntity(type, ev.x, ev.y, Math.cos(angle) * spd, Math.sin(angle) * spd, r);
+        if (id >= 0) {
+          entLife[id] = HAZARD_LIFE_MIN + rng() * HAZARD_LIFE_VAR;
+          entPhase[id] = rng() * 6.28318;
+          entPAng[id] = hazardAngle(id);
+          entK[id] = ev.k & 0xffff;
+        }
+      }
+      function mpHazardStep(t) {
+        const h = MP_FIX;
+        const L = MPX.lure;
+        for (let i = entCount - 1; i >= 0; i--) {
+          const type = entType[i];
+          if (type === 3) continue;              // shards belong to one player
+          entPhase[i] += h * 4.0;
+          entLife[i] -= h;
+          if (entLife[i] <= 0) {
+            emitBurst(entX[i], entY[i], 6, 90, 2);
+            removeEntity(i);
+            continue;
+          }
+          if (type === 1) {
+            // Seeker: steers toward a seeded roaming point (each seeker has its own phase), never toward a player
+            const o = entK[i] * 2.399963;
+            const lx = MP_W / 2 + Math.sin(t * L.fx + L.p1 + o) * L.ax;
+            const ly = MP_H / 2 + Math.sin(t * L.fy + L.p2 + o * 1.3) * L.ay;
+            const sx = lx - entX[i];
+            const sy = ly - entY[i];
+            const slen = Math.hypot(sx, sy) || 1;
+            const desiredSpd = 110 + Math.min(MPX.ww * 6, 75);
+            entVX[i] += ((sx / slen) * desiredSpd - entVX[i]) * h * 1.8;
+            entVY[i] += ((sy / slen) * desiredSpd - entVY[i]) * h * 1.8;
+          } else if (type === 4) {
+            const wv = Math.cos(entPhase[i] * 0.55) * 2.4 * h;
+            const wc = Math.cos(wv);
+            const ws = Math.sin(wv);
+            const wvx = entVX[i] * wc - entVY[i] * ws;
+            entVY[i] = entVX[i] * ws + entVY[i] * wc;
+            entVX[i] = wvx;
+          }
+          let stepScale = 1.0;
+          if (type === 6) stepScale *= 0.55 + 0.95 * Math.max(0, Math.sin(entPhase[i] * 0.7));   // needle: creeps, then lunges
+          entX[i] += entVX[i] * h * stepScale;
+          entY[i] += entVY[i] * h * stepScale;
+          clampEntityToArena(i);
+        }
+      }
+      function mpWorldAdvance() {
+        const sc = MPX.sched;
+        if (!sc || !MPX.lure) return;
+        // pose at the start of this advance (swept collision needs where each hazard was before it moved)
+        for (let i = 0; i < entCount; i++) {
+          if (entType[i] === 3) continue;
+          entPX[i] = entX[i];
+          entPY[i] = entY[i];
+          entPAng[i] = hazardAngle(i);
+        }
+        const target = Math.floor(MPX.clockT / MP_FIX);
+        let guard = 0;
+        while (MPX.wStep < target && guard++ < 1500) {   // 1500 steps = 12.5 s of catch-up per call (a hidden tab)
+          MPX.wStep++;
+          const t = MPX.wStep * MP_FIX;
+          while (MPX.wwi < sc.waves.length && sc.waves[MPX.wwi].t <= t) MPX.ww = sc.waves[MPX.wwi++].w;
+          while (MPX.hi < sc.spawns.length && sc.spawns[MPX.hi].ts <= t) mpSpawnHazard(sc.spawns[MPX.hi++]);
+          mpHazardStep(t);
+        }
+      }
+
+      /* ---- SHARED ORB --------------------------------------------------------------------------------------
+       * ONE green orb at a time. Orb n sits at a position fixed by (seed, n); in a MOVING PRISM wave it also drifts along a
+       * fixed heading from the moment t0 it appeared. Touching it is a CLAIM (index n + match-clock time). The host settles
+       * the claim (multiplayer.js): earliest wins. Until the verdict arrives your points are PENDING: shown at once, and taken
+       * back if the rival turns out to have been earlier. Orb n+1 appears at the winner's claim time for both players.
+       * ------------------------------------------------------------------------------------------------------ */
+      const ORB_MARGIN = 48;
+      const ORB_MIN_JUMP = 170;   // the next orb is at least this far from the previous one (so the player who just took it can not re-take the next at once)
+      const ORB_SPEED = 60;
+      const orbCache = [];
+      const ORB = { n: 0, t0: 0, pend: [] };   // n = orb on the field, t0 = match clock when it appeared, pend = my unconfirmed claims
+      function orbBase(n) {
+        while (orbCache.length <= n) {
+          const i = orbCache.length;
+          const rng = mulberry32(mixSeed(MPX.seed >>> 0, 4242, i));
+          const spanX = MP_W - ORB_MARGIN * 2;
+          const spanY = MP_H - ORB_MARGIN * 2;
+          const px = i === 0 ? MP_W / 2 : orbCache[i - 1][0];
+          const py = i === 0 ? MP_H / 2 : orbCache[i - 1][1];
+          let bx = -1;
+          let by = -1;
+          for (let a = 0; a < 24; a++) {
+            const x = ORB_MARGIN + rng() * spanX;
+            const y = ORB_MARGIN + rng() * spanY;
+            if ((x - px) * (x - px) + (y - py) * (y - py) >= ORB_MIN_JUMP * ORB_MIN_JUMP) { bx = x; by = y; break; }
+          }
+          if (bx < 0) {   // never happens on an 800x450 field, but stay deterministic: the corner farthest from the previous orb
+            const cs = [[ORB_MARGIN, ORB_MARGIN], [MP_W - ORB_MARGIN, ORB_MARGIN], [ORB_MARGIN, MP_H - ORB_MARGIN], [MP_W - ORB_MARGIN, MP_H - ORB_MARGIN]];
+            let bd = -1;
+            for (let c = 0; c < 4; c++) { const d = Math.hypot(cs[c][0] - px, cs[c][1] - py); if (d > bd) { bd = d; bx = cs[c][0]; by = cs[c][1]; } }
+          }
+          orbCache.push([bx, by]);
+        }
+        return orbCache[n];
+      }
+      function orbFold(u, lo, hi) {   // reflect u back and forth inside [lo, hi]
+        const len = hi - lo;
+        let m = (u - lo) % (2 * len);
+        if (m < 0) m += 2 * len;
+        return lo + (m <= len ? m : 2 * len - m);
+      }
+      function orbMovesAt(t) {   // is the wave running at match time t a MOVING PRISM wave?
+        const sc = MPX.sched;
+        if (!sc) return false;
+        let w = 1;
+        for (let i = 0; i < sc.waves.length && sc.waves[i].t <= t; i++) w = sc.waves[i].w;
+        const tw = TWISTS[sc.twistOf[w]];
+        return !!(tw && tw.prism);
+      }
+      const _orbOut = [0, 0];
+      function orbPos(n, t0, t) {
+        const b = orbBase(n);
+        if (!orbMovesAt(t0)) { _orbOut[0] = b[0]; _orbOut[1] = b[1]; return _orbOut; }
+        const ang = mulberry32(mixSeed(MPX.seed >>> 0, 4243, n))() * TWO_PI;
+        const e = Math.max(0, t - t0);
+        _orbOut[0] = orbFold(b[0] + Math.cos(ang) * ORB_SPEED * e, 40, MP_W - 40);
+        _orbOut[1] = orbFold(b[1] + Math.sin(ang) * ORB_SPEED * e, 40, MP_H - 40);
+        return _orbOut;
+      }
+      // I touched the orb: the points are already in (pending). Tell multiplayer.js, show the next orb at once.
+      function mpOrbClaimed(mulBefore, scoreBefore) {
+        const n = ORB.n;
+        const c = Math.max(0, MPX.clockT);
+        ORB.pend.push({ n, c, gained: Game.score - scoreBefore, mulBefore });
+        ORB.n = n + 1;
+        ORB.t0 = c;
+        const op = orbPos(ORB.n, ORB.t0, c);
+        Prism.x = op[0];
+        Prism.y = op[1];
+        if (MPX.onClaim) MPX.onClaim({ n, c });
+        else ORB.pend.pop();   // nobody to ask: the points stand
+      }
+      // The host's decision for orb n. mine = I got it. tWin = match clock when the winner touched it.
+      function mpOrbVerdict(n, mine, tWin) {
+        if (!MPX.active) return;
+        const pi = ORB.pend.findIndex((p) => p.n === n);
+        if (pi >= 0) {
+          const p = ORB.pend.splice(pi, 1)[0];
+          if (mine) return;   // confirmed: nothing else to do
+          // the rival was earlier: take the points back
+          if (p.gained) addPoints(-p.gained);
+          if (Game.multiplier === Math.min(8, p.mulBefore + 1)) Game.multiplier = p.mulBefore;
+          Game.shakeTime = Math.max(Game.shakeTime, 0.2);
+          Game.shakeMag = Math.max(Game.shakeMag, 6);
+          Game.bannerText = 'SNATCHED!';
+          Game.bannerSub = 'THE RIVAL GOT THE ORB FIRST';
+          Game.bannerT = 1.1;
+          Synth.tone(196, 'sawtooth', 0.22, 0.07, 110);
+          if (ORB.n === n + 1) {   // the orb that followed appeared at the winner's time, not mine
+            ORB.t0 = tWin;
+            const op = orbPos(ORB.n, ORB.t0, Math.max(tWin, MPX.clockT));
+            Prism.x = op[0];
+            Prism.y = op[1];
+          }
+          return;
+        }
+        // I did not claim n. If it is still on my field the rival just took it.
+        if (ORB.n <= n) {
+          if (ORB.n === n) {
+            spawnShockwave(Prism.x, Prism.y, 70, 2);
+            emitBurst(Prism.x, Prism.y, 16, 180, 2);
+            Synth.tone(330, 'triangle', 0.12, 0.05, 220);
+          }
+          ORB.n = n + 1;
+          ORB.t0 = tWin;
+          const op = orbPos(ORB.n, ORB.t0, Math.max(tWin, MPX.clockT));
+          Prism.x = op[0];
+          Prism.y = op[1];
+        }
       }
       function mpWaveFlow() {
         const t = MPX.clockT;
@@ -3949,6 +4208,7 @@
           MPX.self = cfg.selfColor || '#4ADE80';
           MPX.draw = cfg.draw || null;
           MPX.onEnd = cfg.onEnd || null;
+          MPX.onClaim = cfg.onClaim || null;
           MPX.clockT = (performance.now() - MPX.startPerf) / 1000;
           Game.mode = 'blitz';   // multiplayer uses Blitz rules (twists, boss wave); its results never touch the Blitz best
           hideDailyUI();
@@ -3964,7 +4224,7 @@
         },
         getState: () => ({
           x: Player.x, y: Player.y, score: Game.score, shields: Game.shields, wave: Game.wave,
-          dead: MPX.dead, dash: Player.dashT > 0, gd: Game.overdriveTimer > 0, surge: MPX.clockT >= MP_SURGE, clockT: MPX.clockT
+          dead: MPX.dead, dash: Player.dashT > 0, gd: Game.overdriveTimer > 0, surge: MPX.clockT >= MP_SURGE, clockT: MPX.clockT, pending: ORB.pend.length
         }),
         // result is known: stop the loop and show the last frame
         finish: () => {
@@ -3986,6 +4246,8 @@
           MPX.dead = false;
           MPX.draw = null;
           MPX.onEnd = null;
+          MPX.onClaim = null;
+          ORB.pend.length = 0;
           SEED.on = false;
           SEED.mp = false;
           Game.mode = MPX.prevMode || 'arcade';
@@ -4012,6 +4274,10 @@
           UI.canvasOverlay.classList.remove('hidden');
           renderArena();
         },
+        // contested orb: the host's verdict for orb n (mine = I got it, tWin = match clock of the winning touch), unconfirmed claims, force-confirm
+        orbVerdict: (n, mine, tWin) => mpOrbVerdict(n, !!mine, Number(tWin) || 0),
+        orbPending: () => ORB.pend.length,
+        orbCommit: () => { ORB.pend.length = 0; },
         tone: (f, type, d, g, slide) => Synth.tone(f, type, d, g, slide),
         initAudio: () => Synth.init(),
         toast: (m) => showToast(m),

@@ -6,7 +6,7 @@
  * ========================================================================== */
 
 export const MP = Object.freeze({
-  VERSION: 1,
+  VERSION: 2,                 // 2 = contested orbs (claim / verdict messages); v1 clients can not play against v2
   ARENA_W: 800,               // fixed logical arena: a phone and a laptop play the SAME field
   ARENA_H: 450,
   MATCH_SEC: 90,              // match length (same as Blitz)
@@ -37,7 +37,13 @@ export const MP = Object.freeze({
   SUB_SHARD_TARGET: 12,       // aimed number of subscribers per shard (the server config sets the shard count)
 
   GHOST_SLOTS: 8,
-  GHOST_HZ: 8
+  GHOST_HZ: 8,
+
+  // contested orb (hybrid mode)
+  ORB_TIE_MS: 60,             // two claims closer than this are a tie: decided by a seeded coin flip, so neither the host nor the faster connection is favoured
+  ORB_WAIT_MIN_MS: 150,       // the host waits at least this long for a possibly earlier guest claim before it keeps its own
+  ORB_WAIT_MAX_MS: 500,
+  ORB_HOLD_MS: 2500           // the result is held at most this long while a claim is still unconfirmed
 });
 
 /* ---------------------------------------------------------------- hashing / rng */
@@ -318,3 +324,109 @@ export function fmtClock(sec) {
   return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0');
 }
 export function cleanName(s) { return String(s || 'Player').replace(/[^\w .#-]/g, '').slice(0, 20) || 'Player'; }
+
+/* ---------------------------------------------------------------- contested orb referee */
+// Both players run their own game, but there is ONE green orb at a time (orb n = the n-th of a seeded sequence).
+// Touching it sends a claim { n, c } where c = match clock (seconds) of the touch. The HOST settles every orb:
+//   earliest claim wins; claims closer than ORB_TIE_MS are a tie decided by a seeded coin flip.
+// The verdict { n, w:'h'|'g', t } goes to the guest. t = the winner's claim time = the moment orb n+1 appears for both.
+// Pure logic: no DOM, no network. The caller supplies send(), onVerdict(), clock() and the timers.
+export function orbCoin(seed, n) { return (hash32(seed >>> 0, n >>> 0, 991) & 1) ? 'h' : 'g'; }
+export function orbDecide(seed, n, h, g) {      // h, g = claim clocks (seconds) of host / guest
+  const d = g - h;                               // > 0: the host touched first
+  if (Math.abs(d) * 1000 <= MP.ORB_TIE_MS) return orbCoin(seed, n);
+  return d > 0 ? 'h' : 'g';
+}
+export function orbWaitMs(rttMs) {
+  const r = Number.isFinite(rttMs) ? rttMs : 200;
+  return Math.max(MP.ORB_WAIT_MIN_MS, Math.min(MP.ORB_WAIT_MAX_MS, r * 0.5 + 120));
+}
+export class OrbReferee {
+  /**
+   * @param {object} o
+   * @param {'host'|'guest'} o.role
+   * @param {number} o.seed
+   * @param {(m:object)=>void} o.send            send a control message to the rival
+   * @param {(n:number, mine:boolean, t:number)=>void} o.onVerdict   result for orb n: did I win it, and when (match clock) it was taken
+   * @param {()=>number} o.clock                 match clock in seconds
+   * @param {()=>number} [o.now]                 monotonic ms (default performance.now)
+   * @param {()=>number} [o.rtt]                 round trip in ms
+   * @param {()=>boolean} [o.solo]               true when there is nobody to wait for (ghost, rival left)
+   * @param {()=>boolean} [o.rivalDead]          true once the rival's "dead" message has arrived (it can not claim any more)
+   * @param {(fn:Function, ms:number)=>any} [o.setTimer]
+   * @param {(id:any)=>void} [o.clearTimer]
+   */
+  constructor(o) {
+    this.o = o;
+    this.role = o.role;
+    this.claims = new Map();    // n -> { h, g, hAt, gAt }
+    this.next = 0;              // host: the next orb to settle
+    this.timer = null;
+    this.dead = false;
+    this.now = o.now || (() => performance.now());
+    this.setT = o.setTimer || ((f, ms) => setTimeout(f, ms));
+    this.clrT = o.clearTimer || ((id) => clearTimeout(id));
+  }
+  dispose() { this.dead = true; if (this.timer != null) this.clrT(this.timer); this.timer = null; this.claims.clear(); }
+
+  /** my own touch (called by the engine through the bridge's onClaim) */
+  localClaim(n, c) {
+    if (this.dead) return;
+    if (this.o.solo && this.o.solo()) { this.o.onVerdict(n, true, c); if (this.role === 'host') this.next = Math.max(this.next, n + 1); return; }
+    if (this.role === 'guest') { this.o.send({ k: 'claim', n, c }); return; }
+    const e = this._entry(n); if (e.h == null) { e.h = c; e.hAt = this.now(); }
+    this.pump();
+  }
+  /** host: the guest's claim arrived */
+  guestClaim(m) {
+    if (this.dead || this.role !== 'host') return;
+    const n = Math.round(Number(m.n)), c = Number(m.c);
+    if (!Number.isFinite(n) || n < 0 || n > 5000 || !Number.isFinite(c) || c < 0 || c > 200) return;
+    if (n < this.next) return;                       // too late: that orb is already settled
+    const e = this._entry(n); if (e.g == null) { e.g = c; e.gAt = this.now(); }
+    this.pump();
+  }
+  /** guest: the host's verdict arrived */
+  hostVerdict(m) {
+    if (this.dead || this.role !== 'guest') return;
+    const n = Math.round(Number(m.n)), t = Number(m.t);
+    if (!Number.isFinite(n) || n < 0 || n > 5000 || (m.w !== 'h' && m.w !== 'g') || !Number.isFinite(t) || t < 0 || t > 200) return;
+    this.o.onVerdict(n, m.w === 'g', t);
+  }
+  _entry(n) { let e = this.claims.get(n); if (!e) { e = { h: null, g: null, hAt: 0, gAt: 0 }; this.claims.set(n, e); } return e; }
+
+  /** host: settle every orb that can be settled now, in order; arm a timer for the first one that still has to wait */
+  pump() {
+    if (this.dead || this.role !== 'host') return;
+    if (this.timer != null) { this.clrT(this.timer); this.timer = null; }
+    const solo = !!(this.o.solo && this.o.solo());
+    const rivalDead = !!(this.o.rivalDead && this.o.rivalDead());
+    const nowMs = this.now();
+    const clock = this.o.clock();
+    let guard = 0;
+    while (guard++ < 64) {
+      const e = this.claims.get(this.next);
+      if (!e) return;
+      let ready = false, waitMs = 0;
+      if (e.h != null && e.g != null) ready = true;
+      else if (e.h != null) {                         // only mine: a guest claim stamped earlier may still be on its way
+        const due = e.hAt + orbWaitMs(this.o.rtt ? this.o.rtt() : 200);
+        ready = solo || rivalDead || nowMs >= due;
+        waitMs = due - nowMs;
+      } else {                                        // only the guest's: my clock must pass c + tie before I know I have no earlier claim
+        ready = solo || clock * 1000 >= e.g * 1000 + MP.ORB_TIE_MS;
+        waitMs = e.g * 1000 + MP.ORB_TIE_MS - clock * 1000;
+      }
+      if (!ready) { this.timer = this.setT(() => { this.timer = null; this.pump(); }, Math.max(5, Math.min(600, waitMs + 5))); return; }
+      const n = this.next;
+      let w;
+      if (e.h != null && e.g != null) w = orbDecide(this.o.seed, n, e.h, e.g);
+      else w = e.h != null ? 'h' : 'g';
+      const t = w === 'h' ? e.h : e.g;
+      this.claims.delete(n);
+      this.next = n + 1;
+      this.o.send({ k: 'orb', n, w, t });
+      this.o.onVerdict(n, w === 'h', t);
+    }
+  }
+}

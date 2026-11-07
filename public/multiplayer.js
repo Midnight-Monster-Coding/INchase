@@ -14,7 +14,11 @@
  *                 mp_config/main                  { mmShards, subShards } you raise these as the player count grows
  *   Game        the engine side is in index.html (section 10b). This file only talks to it through
  *               a one-time private handshake (window.__inchaseMPLink), same idea as auth.js.
- *   Rules       parallel deterministic race: both players run the SAME seeded match on their own device
+ *   Rules       HYBRID duel: both players run their own game on their own device, but the WORLD is shared: the drones are a pure
+ *               function of (seed, match clock) and the green orb is ONE contested orb. A touch is a claim stamped with the match
+ *               clock; the host settles it (earliest wins, ties by seeded coin flip) and the next orb appears for both.
+ *               Ghost / practice races keep a parallel race (the orb sequence is the same, nobody can snatch it).
+ *               Both players run the SAME seeded match on their own device
  *               (same field, same spawns on the same clock) and see each other as an orb. 90 s, last 15 s count x2.
  * ========================================================================== */
 import { getApp, initializeApp } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app.js";
@@ -28,7 +32,7 @@ import { ICE_WORKER_URL, ICE_STUN_FALLBACK, FRIEND_POLICY, GLOBAL_POLICY } from 
 import { Peer } from "./mp-net.js";
 import {
   MP, makeCode, normalizeCode, isValidCode, prettyCode, bandOf, ratingBand, bandsToScan, slotId, homeShard, shardsToProbe, pickShards,
-  eloDelta, decideWinner, encodeSnap, decodeSnap, Interp, ClockSync, buildIceServers, hasTurn,
+  eloDelta, decideWinner, encodeSnap, decodeSnap, Interp, ClockSync, buildIceServers, hasTurn, OrbReferee,
   encodeGhost, decodeGhost, botGhost, ghostAt, fmtClock, cleanName
 } from "./mp-core.js";
 
@@ -740,6 +744,8 @@ async function acceptInvite(inv) {
  * 9. MATCH: connect -> hello -> clock sync -> start -> VS -> countdown -> run -> result -> rematch
  * ------------------------------------------------------------------------ */
 function resetRound(M) {
+  if (M.orb) { M.orb.dispose(); M.orb = null; }
+  M.rivalDeadMsg = false; M.pendSince = 0;
   M.rival = { interp: new Interp(), score: 0, dead: false, deadScore: 0, deadAt: 0, fin: null, lastSeen: 0, seen: false, gone: false, shields: 2, dash: false, scoreAt: 0, name: (M.opp && M.opp.name) || '?' };
   M.me = { dead: false, deadScore: 0, deadAt: 0, scoreAt: 0, lastScore: 0, fin: null, finAt: 0, timeUp: false };
   M.rec = { pos: [], scores: [] };
@@ -766,6 +772,7 @@ function dropMatch(M) {
   if (!M) return;
   M.timers.forEach(clearTimeout); M.timers = [];
   clearInterval(M.tickId); clearTimeout(M.helloTimer);
+  if (M.orb) { M.orb.dispose(); M.orb = null; }
   if (M.peer) { try { M.peer.close(); } catch (e) { /* ignore */ } }
   if (Z.match === M) Z.match = null;
 }
@@ -817,6 +824,7 @@ function onCtl(M, m) {
       const mine = identity();
       if (!uid || (mine && uid === mine.uid)) return;
       if (M.expectUid && uid !== M.expectUid) { failMatch(M, 'WRONG OPPONENT'); return; }
+      if (Math.round(num(m.v, 0, 99, 0)) !== MP.VERSION) { failMatch(M, 'ONE OF YOU HAS AN OLD VERSION. REFRESH THE GAME.'); return; }
       M.opp = { uid, name: cleanName(m.name), band: Math.round(num(m.band, 0, 5, 0)), rating: Math.round(num(m.rating, 0, 4000, 1000)), photo: '' };
       M.rival.name = M.opp.name;
       M.gotHello = true;
@@ -830,6 +838,7 @@ function onCtl(M, m) {
     case 'sync':
       if (M.role !== 'host' || !M.gotHello) return;
       M.skew = num(m.offset, -1e10, 1e10, 0);        // guest clock + offset = host clock
+      M.rtt = num(m.rtt, 0, 5000, 200);              // round trip in ms: the host waits about half of it (+ a margin) for an earlier orb claim
       hostStart(M);
       break;
     case 'start': {
@@ -844,7 +853,11 @@ function onCtl(M, m) {
       beginRound(M, seed, startPerf);
       break;
     }
+    case 'claim': if (M.orb && M.role === 'host') M.orb.guestClaim(m); break;      // guest touched the orb (host settles it)
+    case 'orb': if (M.orb && M.role === 'guest') M.orb.hostVerdict(m); break;     // host: who got orb n, and when
     case 'dead':
+      M.rivalDeadMsg = true;                         // ctl is ordered: every claim the rival made before dying has already arrived
+      if (M.orb) M.orb.pump();
       M.rival.dead = true; M.rival.deadScore = num(m.score, 0, 1e7, M.rival.score); M.rival.score = M.rival.deadScore; M.rival.deadAt = num(m.at, 0, 100, 0);
       evaluate(M);
       break;
@@ -919,10 +932,21 @@ function beginRound(M, seed, startPerf) {
 }
 function beginEngine(M) {
   if (Z.match !== M || M.phase !== 'vs') return;
+  if (M.orb) M.orb.dispose();
+  M.orb = new OrbReferee({
+    role: M.role === 'host' ? 'host' : 'guest', seed: M.seed,
+    send: (m) => { if (M.peer) M.peer.send(m); },
+    onVerdict: (n, mine, t) => onOrbVerdict(M, n, mine, t),
+    clock: () => (performance.now() - M.startPerf) / 1000,
+    rtt: () => M.rtt || 200,
+    solo: () => !!M.ghost || !M.peer || M.peerClosed || M.rival.gone,   // nobody to wait for: ghost / practice race or the rival left
+    rivalDead: () => !!M.rivalDeadMsg
+  });
   bridge.begin({
     seed: M.seed, startPerf: M.startPerf, selfColor: '#38BDF8',
     draw: (c, w, h, st) => drawMP(M, c, w, h, st),
-    onEnd: (ev) => onEngineEnd(M, ev)
+    onEnd: (ev) => onEngineEnd(M, ev),
+    onClaim: (cl) => { if (Z.match === M && M.orb) M.orb.localClaim(cl.n, cl.c); }
   });
   M.phase = 'run';
   showHud(M);
@@ -956,6 +980,26 @@ function feedGhost(M, clock) {
   if (g.dead && !R.dead) { R.dead = true; R.deadScore = g.score; R.deadAt = M.ghost.deadAt; }
 }
 
+/* contested orb: the host's decision for orb n reached this side (the host's own referee calls this too) */
+function onOrbVerdict(M, n, mine, t) {
+  if (Z.match !== M) return;
+  bridge.orbVerdict(n, mine, t);
+  if (M.me.dead && M.peer) {   // a verdict can change my score after I died: tell the rival the corrected score
+    const st = bridge.getState();
+    if (st.score !== M.me.deadScore) { M.me.deadScore = st.score; M.peer.send({ k: 'dead', score: st.score, at: M.me.deadAt, wave: st.wave }); }
+  }
+  evaluate(M);
+}
+/* the result must not be taken from a score that still has an unconfirmed orb claim in it (it could be taken back a moment later) */
+function holdForClaims(M) {
+  const p = bridge.orbPending();
+  if (!p) { M.pendSince = 0; return false; }
+  if (M.ghost || !M.peer || M.peerClosed || M.rival.gone) { bridge.orbCommit(); M.pendSince = 0; return false; }
+  const now = performance.now();
+  if (!M.pendSince) M.pendSince = now;
+  if (now - M.pendSince > MP.ORB_HOLD_MS) { bridge.orbCommit(); M.pendSince = 0; return false; }   // the verdict never came: the claim stands
+  return true;
+}
 function onEngineEnd(M, ev) {
   if (Z.match !== M) return;
   if (ev.type === 'dead') {
@@ -969,6 +1013,8 @@ function markGone(M) {
   const R = M.rival;
   if (R.gone) return;
   R.gone = true;
+  if (M.orb) M.orb.pump();                                  // host: settle what is waiting, nobody else can claim now
+  if (bridge.orbPending() > 0) bridge.orbCommit();           // guest: no verdict will ever come, the claims stand
   if (!R.dead) { R.dead = true; R.deadScore = R.score; R.deadAt = Math.max(0, (performance.now() - M.startPerf) / 1000); }
 }
 function evaluate(M) {
@@ -979,11 +1025,13 @@ function evaluate(M) {
   if (M.peer && R.seen && !R.gone && now - R.lastSeen > MP.GONE_MS) markGone(M);
   if (!M.me.fin) {
     const mine = M.me.dead ? M.me.deadScore : st.score;
-    if (R.fin && R.fin.ko) finishMe(M, 'rival-ko');
-    else if (R.dead && M.me.dead) finishMe(M, 'both');
-    else if (R.dead && !M.me.dead && mine > R.deadScore) finishMe(M, 'ko');
-    else if (M.me.timeUp) finishMe(M, 'time');
-    else if (M.me.dead && (st.clockT >= MP.MATCH_SEC || R.fin)) finishMe(M, 'time');
+    let why = '';
+    if (R.fin && R.fin.ko) why = 'rival-ko';
+    else if (R.dead && M.me.dead) why = 'both';
+    else if (R.dead && !M.me.dead && mine > R.deadScore) why = 'ko';
+    else if (M.me.timeUp) why = 'time';
+    else if (M.me.dead && (st.clockT >= MP.MATCH_SEC || R.fin)) why = 'time';
+    if (why && !holdForClaims(M)) finishMe(M, why);
   }
   if (M.me.fin && !M.result && (R.fin || M.ghost || R.gone || now - M.me.finAt > MP.FIN_WAIT_MS)) computeResult(M);
 }
