@@ -20,8 +20,8 @@
 
 /* ---------- live HUD (inside the arena frame) ---------- */
 .mp-hud { position: absolute; left: 0; right: 0; top: 0; z-index: 8; display: grid; grid-template-columns: 1fr auto 1fr; align-items: start; gap: 8px; padding: 6px 8px; pointer-events: none; font-weight: 700; text-shadow: 0 2px 0 rgba(0,0,0,.8); }
-.mp-hud-side { display: flex; flex-direction: column; min-width: 0; color: #86EFAC; }
-.mp-hud-side.opp { align-items: flex-end; color: #FDA4AF; }
+.mp-hud-side { display: flex; flex-direction: column; min-width: 0; color: #38BDF8; }
+.mp-hud-side.opp { align-items: flex-end; color: #FF4D6A; }
 .mp-hud-side b { font-size: 22px; line-height: 1; font-variant-numeric: tabular-nums; }
 .mp-hud-lbl { font-size: 9px; letter-spacing: .12em; opacity: .9; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mp-hud-mid { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 110px; }
@@ -29,8 +29,13 @@
 .mp-hud.surge .mp-hud-time { color: #FBBF24; animation: mpPulse .6s ease-in-out infinite alternate; }
 .mp-bar { display: flex; width: 120px; height: 8px; border: 2px solid #0A0A0A; border-radius: 6px; overflow: hidden; background: #0A0A0A; gap: 2px; }
 .mp-bar i { display: block; flex: 1 1 0; transition: flex-grow .35s ease; }
-.mp-bar i.me { background: #4ADE80; }
-.mp-bar i.opp { background: #F43F5E; }
+.mp-bar i.me { background: #38BDF8; }
+.mp-bar i.opp { background: #FF4D6A; }
+/* result score cells: cyan = you, red = rival, bright text on a dark tile (never dark-on-dark) */
+.mp-cell { background: #0A0A0A; border: 3px solid var(--ink); box-shadow: 3px 3px 0 var(--ink); }
+.mp-cell.me { color: #38BDF8; border-color: #38BDF8; }
+.mp-cell.opp { color: #FF4D6A; border-color: #FF4D6A; }
+.mp-cell.won { box-shadow: 0 0 14px currentColor, 3px 3px 0 var(--ink); }
 @keyframes mpPulse { from { transform: scale(1); } to { transform: scale(1.18); } }
 
 .mp-spec { position: absolute; left: 8px; right: 8px; bottom: 8px; z-index: 9; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; border: 3px solid var(--ink); border-radius: 12px; background: rgba(10,10,10,.88); color: #F8FAFC; font-size: 11px; font-weight: 700; letter-spacing: .05em; box-shadow: 4px 4px 0 var(--ink); }
@@ -97,3 +102,10 @@
   .mp-smoke i { animation: none; opacity: .5; }
   .mp-hud.surge .mp-hud-time, .mp-spin { animation: none; }
 }
+/* ---------- the MULTIPLAYER / VERSUS button: a special button, not a normal mode key ---------- */
+#mpBtn.retro-key.mp-special { position: relative; color: #FFFFFF; text-shadow: 0 2px 0 rgba(0,0,0,.55); letter-spacing: .08em; background: linear-gradient(115deg, #7C3AED 0%, #C026D3 48%, #F97316 100%); background-size: 200% 100%; border-color: #0A0A0A; animation: mpBtnShine 3.2s ease-in-out infinite, mpBtnGlow 2s ease-in-out infinite alternate; }
+#mpBtn.retro-key.mp-special:hover { filter: brightness(1.12); }
+#mpBtn.retro-key.mp-special .desk-only::before, #mpBtn.retro-key.mp-special .mob-only::before { content: '\2694\FE0E\00a0'; }
+@keyframes mpBtnShine { 0%, 100% { background-position: 0% 0; } 50% { background-position: 100% 0; } }
+@keyframes mpBtnGlow { from { box-shadow: 0 0 0 rgba(192,38,211,0); } to { box-shadow: 0 0 14px rgba(192,38,211,.75); } }
+@media (prefers-reduced-motion: reduce) { #mpBtn.retro-key.mp-special { animation: none; } }

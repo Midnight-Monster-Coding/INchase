@@ -27,7 +27,7 @@ import { firebaseConfig } from "./firebase-config.js";
 import { ICE_WORKER_URL, ICE_STUN_FALLBACK, FRIEND_POLICY, GLOBAL_POLICY } from "./mp-config.js";
 import { Peer } from "./mp-net.js";
 import {
-  MP, makeCode, normalizeCode, isValidCode, prettyCode, bandOf, bandsToScan, slotId, homeShard, shardsToProbe, pickShards,
+  MP, makeCode, normalizeCode, isValidCode, prettyCode, bandOf, ratingBand, bandsToScan, slotId, homeShard, shardsToProbe, pickShards,
   eloDelta, decideWinner, encodeSnap, decodeSnap, Interp, ClockSync, buildIceServers, hasTurn,
   encodeGhost, decodeGhost, botGhost, ghostAt, fmtClock, cleanName
 } from "./mp-core.js";
@@ -129,7 +129,7 @@ function avatar(size, who) {
 const DEFAULT_STATS = { rating: 1000, wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, games: 0, bestScore: 0 };
 let stats = Object.assign({}, DEFAULT_STATS);
 let statsLoaded = false;
-const myBand = () => { const b = bridge.bests(); return bandOf(Math.max(b.arcade, b.blitz, stats.bestScore)); };
+const myBand = () => ratingBand(stats.rating);   // same-level matchmaking: by multiplayer rating
 
 // reads my stats and, in the same round trip, measures the server clock offset
 async function syncProfileAndClock() {
@@ -878,7 +878,7 @@ function hostStart(M) {
 function startGhostMatch(g) {
   const M = newMatch('ghost', 'host', null);
   M.ghost = g;
-  M.opp = { uid: 'ghost', name: g.name, band: myBand(), rating: g.bot ? 850 + myBand() * 100 : 1000, photo: '' };
+  M.opp = { uid: 'ghost', name: g.name, band: myBand(), rating: g.bot ? 900 + myBand() * 100 : stats.rating, photo: '' };
   M.rival.name = g.name;
   beginRound(M, g.seed, performance.now() + (MP.VS_SEC + 0.3 + MP.COUNTDOWN_SEC) * 1000);
 }
@@ -901,7 +901,7 @@ function beginRound(M, seed, startPerf) {
 function beginEngine(M) {
   if (Z.match !== M || M.phase !== 'vs') return;
   bridge.begin({
-    seed: M.seed, startPerf: M.startPerf, selfColor: '#4ADE80',
+    seed: M.seed, startPerf: M.startPerf, selfColor: '#38BDF8',
     draw: (c, w, h, st) => drawMP(M, c, w, h, st),
     onEnd: (ev) => onEngineEnd(M, ev)
   });
@@ -1015,6 +1015,9 @@ function computeResult(M) {
     M.result.streak = stats.streak;
     const id = identity();
     setDoc(doc(db, 'mpstats', id.uid), Object.assign(pick(stats), { updatedAt: serverTimestamp() }), { merge: true }).catch((e) => log('stats save failed', e));
+    // show the new rating on the leaderboard (under the arcade best) and in the profile tab
+    updateDoc(doc(db, 'leaderboard', id.uid), { mpRating: stats.rating }).catch((e) => log('leaderboard rating save failed', e));
+    try { window.dispatchEvent(new CustomEvent('inchase:mprating', { detail: { rating: stats.rating, wins: stats.wins, losses: stats.losses, draws: stats.draws } })); } catch (e) { /* ignore */ }
     if (M.kind === 'global' && mine.score > 0 && cryptoRand() < 0.4) uploadGhost(M, id);
   }
   if (M.kind === 'friend' && M.opp.uid) M.result.h2h = h2h(M.opp.uid, outcome);
@@ -1067,36 +1070,46 @@ function drawMP(M, ctx, W, H, state) {
   const clock = (performance.now() - M.startPerf) / 1000;
   const R = M.rival;
   // rival orb: always a round orb with a white rim and a name tag (hazards are sharp shapes, so they can not be confused)
-  const p = R.interp.at(performance.now() - MP.INTERP_MS);
+  let p;
+  if (M.ghost) {
+    // ghost: driven by the shared match clock every frame (no network buffer), so it moves in lock-step with the player
+    const g = ghostAt(M.ghost, Math.max(0, Math.min(MP.MATCH_SEC, clock)));
+    p = { x: g.x, y: g.y };
+    if (clock >= 0) {
+      R.seen = true; R.lastSeen = performance.now();
+      if (g.score !== R.score) { R.score = g.score; R.scoreAt = clock; }
+      if (g.dead && !R.dead) { R.dead = true; R.deadScore = g.score; R.deadAt = M.ghost.deadAt; }
+    }
+  } else p = R.interp.at(performance.now() - MP.INTERP_MS);
   if (p) {
     ctx.save();
     ctx.translate(p.x, p.y);
     if (R.dead) {
       ctx.globalAlpha = 0.4;
-      ctx.strokeStyle = '#FB7185'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+      ctx.strokeStyle = '#C4B5FD'; ctx.lineWidth = 3; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(-9, -9); ctx.lineTo(9, 9); ctx.moveTo(9, -9); ctx.lineTo(-9, 9); ctx.stroke();
     } else {
       if (R.dash) { ctx.scale(1.5, 0.8); }
-      ctx.shadowColor = '#FB7185'; ctx.shadowBlur = 16;
+      ctx.shadowColor = '#A78BFA'; ctx.shadowBlur = 16;
       for (let i = 1; i <= R.shields; i++) {
-        ctx.strokeStyle = i === 2 ? 'rgba(251,113,133,0.75)' : 'rgba(253,164,175,0.9)';
+        ctx.strokeStyle = i === 2 ? 'rgba(167,139,250,0.75)' : 'rgba(196,181,253,0.9)';
         ctx.lineWidth = 2; ctx.setLineDash(i === 2 ? [6, 4] : []);
         ctx.beginPath(); ctx.arc(0, 0, 11 + 3 * i, 0, Math.PI * 2); ctx.stroke();
       }
       ctx.setLineDash([]);
       ctx.globalAlpha = 0.95;
-      ctx.fillStyle = '#F43F5E';
+      ctx.fillStyle = '#A78BFA';
       ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
       ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2;
       ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.stroke();
-      ctx.fillStyle = '#FFE4E6';
+      ctx.fillStyle = '#EDE9FE';
       ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
     }
     ctx.restore();
     ctx.save();
     ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = '#FECDD3';
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = '#DDD6FE';
     const label = (M.ghost ? 'GHOST ' : '') + (R.name || '').slice(0, 14);
     const ty = Math.max(14, p.y - 24);
     ctx.strokeText(label, p.x, ty); ctx.fillText(label, p.x, ty);
@@ -1205,9 +1218,9 @@ function showResult(M) {
   const why = r.ko === 'me' ? 'YOU PASSED THEIR SCORE' : r.ko === 'them' ? 'THEY PASSED YOUR SCORE' : r.left ? 'OPPONENT LEFT' : M.me.reason === 'both' ? 'BOTH OUT' : 'TIME UP';
   box.appendChild(el('div', 'text-[10px] tracking-widest opacity-70 mb-3', why));
   const grid = el('div', 'grid grid-cols-2 gap-3');
-  const cell = (label, v, cls) => { const c = el('div', 'retro-bay ' + cls + ' rounded-xl p-2.5'); c.appendChild(el('div', 'text-[10px] tracking-widest', label)); c.appendChild(el('div', 'text-2xl tabular-nums mt-1', fmt(v))); return c; };
-  grid.appendChild(cell('YOU', r.mine.score, r.outcome === 'win' ? 'c-lime' : 'c-white'));
-  grid.appendChild(cell((M.opp.name || 'RIVAL').slice(0, 12).toUpperCase(), r.theirs.score, r.outcome === 'lose' ? 'c-lime' : 'c-white'));
+  const cell = (label, v, cls) => { const c = el('div', 'mp-cell ' + cls + ' rounded-xl p-2.5'); c.appendChild(el('div', 'text-[10px] tracking-widest', label)); c.appendChild(el('div', 'text-2xl tabular-nums mt-1', fmt(v))); return c; };
+  grid.appendChild(cell('YOU', r.mine.score, 'me' + (r.outcome === 'win' ? ' won' : '')));
+  grid.appendChild(cell((M.opp.name || 'RIVAL').slice(0, 12).toUpperCase(), r.theirs.score, 'opp' + (r.outcome === 'lose' ? ' won' : '')));
   box.appendChild(grid);
   const pills = el('div', 'mt-3 flex flex-wrap justify-center gap-2');
   if (r.rated) pills.appendChild(el('span', 'nb-pill c-cyan text-xs', 'RATING ' + stats.rating + ' (' + (r.delta >= 0 ? '+' : '') + r.delta + ')'));

@@ -173,7 +173,17 @@ function openAccount() {
   $('aEmail').textContent = profile.email || '';
   $('photoMsg').textContent = '';
   $('photoRemoveBtn').classList.toggle('hidden', !profile.custom);
+  fillAccountStats();
+  loadMyMp().then(fillAccountStats);
   showModal('accountModal');
+}
+function fillAccountStats() {
+  const b = $('aBest'), r = $('aRating'), rec = $('aRecord');
+  if (!b || !r || !rec) return;
+  b.textContent = (Number(boardBest()) || 0).toLocaleString();
+  r.textContent = String(myMpShown);
+  const t = myMpStats.wins + myMpStats.losses + myMpStats.draws;
+  rec.textContent = t ? myMpStats.wins + 'W ' + myMpStats.losses + 'L' : 'NO RATED GAMES YET';
 }
 $('accountChip').addEventListener('click', openAccount);
 $('accountBtnM').addEventListener('click', openAccount);
@@ -631,6 +641,9 @@ window.addEventListener('orientationchange', () => setTimeout(syncSideMode, 150)
 if (document.readyState === 'complete') syncSideMode(); else window.addEventListener('load', syncSideMode);
 
 // --- public entry for this player ---
+let myMpRating = null;   // multiplayer rating (mpstats/{uid}); mirrored into leaderboard/{uid}.mpRating
+const mpField = () => (myMpRating != null ? { mpRating: myMpRating } : {});
+
 async function pushBoard(force) {
   const user = currentUser;
   if (!user || !profile || profile.uid !== user.uid) return false;
@@ -643,6 +656,7 @@ async function pushBoard(force) {
       usernameLower: profile.username.toLowerCase(),
       photoURL: profile.photoURL || '',
       best,
+      ...mpField(),
       updatedAt: serverTimestamp()
     });
     lastBoardSig = sig;
@@ -654,7 +668,32 @@ async function pushBoard(force) {
   }
 }
 
+async function loadMyMp() {
+  try {
+    const u = currentUser;
+    if (!u) return;
+    const s = await getDoc(doc(db, 'mpstats', u.uid));
+    const d = s.exists() ? (s.data() || {}) : {};
+    if (typeof d.rating === 'number' && Number.isFinite(d.rating) && (d.games || 0) > 0) myMpRating = Math.round(d.rating);
+    myMpStats = { wins: Number(d.wins) || 0, losses: Number(d.losses) || 0, draws: Number(d.draws) || 0 };
+    if (typeof d.rating === 'number' && Number.isFinite(d.rating)) myMpShown = Math.round(d.rating);
+  } catch (e) { /* optional */ }
+}
+let myMpStats = { wins: 0, losses: 0, draws: 0 };
+let myMpShown = 1000;
+// multiplayer.js tells us after every rated match
+window.addEventListener('inchase:mprating', (e) => {
+  const d = (e && e.detail) || {};
+  if (!Number.isFinite(d.rating)) return;
+  myMpRating = myMpShown = Math.round(d.rating);
+  myMpStats = { wins: d.wins | 0, losses: d.losses | 0, draws: d.draws | 0 };
+  const me = Board.rows.find((r) => currentUser && r.uid === currentUser.uid);
+  if (me) { me.mpRating = myMpRating; renderBoard(); }
+  fillAccountStats();
+});
+
 async function syncBoardAfterLogin() {
+  await loadMyMp();
   await pushBoard(true);       // also creates the entry for accounts that existed before the leaderboard
   startBoardLive();
 }
@@ -671,6 +710,7 @@ function resetBoard() {
   Board.loadedAt = 0;
   Board.myRank = null;
   lastBoardSig = '';
+  myMpRating = null; myMpStats = { wins: 0, losses: 0, draws: 0 }; myMpShown = 1000;
 }
 
 // --- reading ---
@@ -684,6 +724,7 @@ function addRows(docs) {
       username: String(x.username || '?'),
       photoURL: typeof x.photoURL === 'string' ? x.photoURL : '',
       best,
+      mpRating: Number(x.mpRating) > 0 ? Math.round(Number(x.mpRating)) : 0,
       rank: prev && prev.best === best ? prev.rank : Board.rows.length + 1
     });
   });
@@ -901,11 +942,20 @@ function buildRow(rank, p, isMe) {
   const s = document.createElement('span');
   s.className = 'lb-score tabular-nums';
   s.textContent = (Number(p.best) || 0).toLocaleString();
+  const sc = document.createElement('span');
+  sc.className = 'lb-sc';
+  sc.appendChild(s);
+  if (Number(p.mpRating) > 0) {
+    const m = document.createElement('span');
+    m.className = 'lb-mp tabular-nums';
+    m.textContent = 'MP ' + Math.round(p.mpRating);
+    sc.appendChild(m);
+  }
 
   row.appendChild(r);
   row.appendChild(av);
   row.appendChild(n);
-  row.appendChild(s);
+  row.appendChild(sc);
   return row;
 }
 
@@ -1116,6 +1166,7 @@ async function applyPhoto(dataUrl) {
     usernameLower: profile.username.toLowerCase(),
     photoURL: photo,
     best,
+    ...mpField(),
     updatedAt: serverTimestamp()
   });
   await batch.commit();

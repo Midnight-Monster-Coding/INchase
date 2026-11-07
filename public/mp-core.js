@@ -87,6 +87,12 @@ export function bandOf(best) {
   const b = Math.max(0, Number(best) || 0);
   return Math.max(0, Math.min(MP.BANDS - 1, Math.floor(Math.log2(b / 100 + 1))));
 }
+// matchmaking band from the multiplayer RATING (new players start at 1000 = band 1): <950, <1050, <1150, <1250, <1350, 1350+
+export function ratingBand(rating) {
+  const r = Number(rating);
+  const v = Number.isFinite(r) ? r : 1000;
+  return Math.max(0, Math.min(MP.BANDS - 1, Math.floor((v - 850) / 100)));
+}
 // slot ids to look at, in order, for a search that has been running `elapsedMs`
 export function bandsToScan(band, elapsedMs) {
   const out = [band];
