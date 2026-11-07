@@ -117,13 +117,31 @@ function identity() {
   if (!p || p.uid !== u.uid || !p.username) return null;
   return { uid: u.uid, name: cleanName(p.username), photo: safeImg(p.photoURL) };
 }
-function avatar(size, who) {
+// Google profile pictures are served as 96 px by default; the big VS screen asks for a larger copy of the same picture
+function hiRes(u) {
+  if (typeof u !== 'string' || !/^https:\/\/[^/]*googleusercontent\.com\//i.test(u)) return u;
+  return u.replace(/=s\d+(-c)?$/, '=s512-c').replace(/\/s\d+-c\//, '/s512-c/');
+}
+function fillAvatar(d, who, hi) {
+  d.textContent = '';
+  if (who && who.photo) {
+    const i = new Image();
+    i.alt = ''; i.draggable = false; i.decoding = 'sync';
+    i.src = hi ? hiRes(who.photo) : who.photo;
+    d.appendChild(i);
+  } else d.textContent = ((who && who.name) || '?').charAt(0).toUpperCase();
+}
+function avatar(size, who, hi) {
   const d = el('div', 'mp-av');
   d.style.width = d.style.height = size + 'px';
   d.style.fontSize = Math.round(size * 0.46) + 'px';
-  if (who && who.photo) { const i = new Image(); i.alt = ''; i.draggable = false; i.src = who.photo; d.appendChild(i); }
-  else d.textContent = ((who && who.name) || '?').charAt(0).toUpperCase();
+  fillAvatar(d, who, hi);
   return d;
+}
+// start downloading / decoding a photo early (while the clocks sync), so it is ready when the VS screen opens
+function warmPhoto(u) {
+  if (!u) return;
+  try { const i = new Image(); i.src = hiRes(u); if (i.decode) i.decode().catch(() => {}); } catch (e) { /* ignore */ }
 }
 
 const DEFAULT_STATS = { rating: 1000, wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, games: 0, bestScore: 0 };
@@ -258,7 +276,7 @@ view('search', (v) => {
   v.appendChild(ui.searchTime);
   ui.searchMsg = note('LOOKING FOR A PLAYER NEAR YOUR LEVEL...');
   v.appendChild(ui.searchMsg);
-  ui.ghostBtn = btn('PLAY VS GHOST', 'c-orange', () => startGhostFromSearch());
+  ui.ghostBtn = btn('PLAY VS GHOST (UNRATED)', 'c-orange', () => startGhostFromSearch());
   ui.ghostBtn.classList.add('hidden');
   v.appendChild(ui.ghostBtn);
   v.appendChild(btn('CANCEL', 'c-white', () => { cancelSearch(); show('menu'); }));
@@ -778,6 +796,7 @@ function onOpen(M) {
   M.peer.route().then((r) => { M.route = r; log('route', r); });
   const id = identity();
   if (!id) { failMatch(M, 'LOGIN AGAIN'); return; }
+  warmPhoto(id.photo);
   M.peer.send({ k: 'hello', v: MP.VERSION, uid: id.uid, name: id.name, band: myBand(), rating: stats.rating });
   M.helloTimer = setTimeout(() => { if (Z.match === M && !M.gotHello) failMatch(M, 'OPPONENT DID NOT RESPOND'); }, 8000);
 }
@@ -802,7 +821,7 @@ function onCtl(M, m) {
       M.rival.name = M.opp.name;
       M.gotHello = true;
       clearTimeout(M.helloTimer);
-      fetchOpponent(uid).then((o) => { if (Z.match === M) { M.opp.photo = o.photo; if (o.rating) M.opp.rating = o.rating; } });
+      M.oppInfo = fetchOpponent(uid).then((o) => { if (Z.match === M) { M.opp.photo = o.photo; if (o.rating) M.opp.rating = o.rating; warmPhoto(o.photo); } });
       if (M.role === 'guest') runSync(M);
       break;
     }
@@ -843,7 +862,7 @@ function onPos(M, s) {
   const d = decodeSnap(s);
   if (!d) return;
   const R = M.rival;
-  if (!R.interp.push({ seq: d.seq, t: d.t + M.skew, x: d.x, y: d.y })) return;
+  if (!R.interp.push({ seq: d.seq, t: d.t + M.skew, x: d.x, y: d.y, dash: d.dash })) return;
   R.lastSeen = performance.now(); R.seen = true;
   if (d.score !== R.score) { R.score = d.score; R.scoreAt = Math.max(0, (performance.now() - M.startPerf) / 1000); }
   R.shields = d.shields; R.dash = d.dash; R.gd = !!d.gd;
@@ -1001,10 +1020,10 @@ function computeResult(M) {
   if (outcome === 'win') M.series.me++; else if (outcome === 'lose') M.series.opp++;
   const ko = mine.ko ? 'me' : (R.fin && R.fin.ko ? 'them' : '');
   M.result = { outcome, mine, theirs, ko, left: R.gone && !R.fin, rated: false, delta: 0 };
-  // rating: global + ghost only (friend duels are unrated, so nobody can farm rating with a friend)
-  if (M.kind !== 'friend' && identity()) {
+  // rating: real GLOBAL matches only. Friend duels (nobody can farm rating with a friend) and ghost / practice-bot races are unrated.
+  if (M.kind === 'global' && identity()) {
     const oppR = M.opp.rating || 1000;
-    let d = eloDelta(stats.rating, oppR, outcome === 'win' ? 1 : outcome === 'draw' ? 0.5 : 0, M.kind === 'ghost' ? 12 : 24);
+    let d = eloDelta(stats.rating, oppR, outcome === 'win' ? 1 : outcome === 'draw' ? 0.5 : 0, 24);
     if (outcome === 'lose' && M.me.dead && M.me.deadAt < MP.EARLY_DEATH_SEC) d = Math.max(d, 0);   // dying in the first 15 s is free
     M.result.rated = true; M.result.delta = d;
     stats.rating = Math.round(num(stats.rating + d, 0, 4000, 1000));
@@ -1018,13 +1037,21 @@ function computeResult(M) {
     // show the new rating on the leaderboard (under the arcade best) and in the profile tab
     updateDoc(doc(db, 'leaderboard', id.uid), { mpRating: stats.rating }).catch((e) => log('leaderboard rating save failed', e));
     try { window.dispatchEvent(new CustomEvent('inchase:mprating', { detail: { rating: stats.rating, wins: stats.wins, losses: stats.losses, draws: stats.draws } })); } catch (e) { /* ignore */ }
-    if (M.kind === 'global' && mine.score > 0 && cryptoRand() < 0.4) uploadGhost(M, id);
+    if (mine.score > 0 && cryptoRand() < 0.4) uploadGhost(M, id);
   }
   if (M.kind === 'friend' && M.opp.uid) M.result.h2h = h2h(M.opp.uid, outcome);
   if (outcome === 'win') (ko === 'me' ? sfx.ko : sfx.win)(); else if (outcome === 'lose') sfx.lose(); else sfx.pop();
+  buzz(outcome, ko);
   hideHud();
   showResult(M);
   tryRematch(M);
+}
+// Haptics: navigator.vibrate exists on Android Chrome / Firefox (iPhones and desktops have no such API, so nothing happens there)
+function buzz(outcome, ko) {
+  try {
+    if (!navigator.vibrate || document.hidden) return;
+    navigator.vibrate(outcome === 'win' ? (ko === 'me' ? [70, 40, 70, 40, 240] : [60, 50, 60, 50, 170]) : outcome === 'lose' ? [320] : [90, 70, 90]);
+  } catch (e) { /* ignore */ }
 }
 const pick = (s) => ({ rating: s.rating, wins: s.wins, losses: s.losses, draws: s.draws, streak: s.streak, bestStreak: s.bestStreak, games: s.games, bestScore: s.bestScore });
 function uploadGhost(M, id) {
@@ -1065,22 +1092,109 @@ function leaveMatch(M, silent) {
 /* ---------------------------------------------------------------------------
  * 10. In-arena drawing: rival orb, countdown, final surge frame
  * ------------------------------------------------------------------------ */
+/* rival tail: a tapered ribbon + stretched afterimages while dashing, built from the positions the rival is DRAWN at,
+   so it lines up with the orb on every screen (the same look as your own tail) */
+const TAIL_COL = '#A78BFA', TAIL_HOT = '#EDE9FE', TAIL_GOLD = '#F59E0B';
+function trailStep(R, p, dashing, now) {
+  const T = R.trail || (R.trail = []);
+  const A = R.after || (R.after = []);
+  if (!p || R.dead) { T.length = 0; A.length = 0; return; }
+  const last = T.length ? T[T.length - 1] : null;
+  if (!last || Math.abs(p.x - last.x) + Math.abs(p.y - last.y) > 0.25) {
+    if (last) { const dx = p.x - last.x, dy = p.y - last.y; if (dx * dx + dy * dy > 0.5) R.ang = Math.atan2(dy, dx); }
+    T.push({ x: p.x, y: p.y, t: now, d: dashing });
+    if (T.length > 72) T.shift();
+  }
+  while (T.length > 1 && now - T[0].t > 360) T.shift();
+  if (dashing && now - (R.afterT || 0) > 36) { R.afterT = now; A.push({ x: p.x, y: p.y, a: R.ang || 0, t: now }); }
+  while (A.length && now - A[0].t > 280) A.shift();
+}
+function drawTail(ctx, R, dashing, now) {
+  const T = R.trail, A = R.after;
+  if (!T || !A) return;
+  const col = R.gd ? TAIL_GOLD : TAIL_COL;
+  ctx.save();
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.fillStyle = col;
+  for (let i = 0; i < A.length; i++) {            // afterimages: stretched ghosts of the core along the dash
+    const t = 1 - (now - A[i].t) / 280;
+    if (t <= 0) continue;
+    ctx.save();
+    ctx.translate(A[i].x, A[i].y); ctx.rotate(A[i].a); ctx.globalAlpha = t * 0.45;
+    ctx.beginPath(); ctx.ellipse(0, 0, 11 * (1 + 1.5 * t), 11 * (0.5 + 0.45 * t), 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  if (dashing) { ctx.shadowColor = col; ctx.shadowBlur = 14; }
+  const n = T.length;
+  for (let k = n - 1; k > 0; k--) {               // ribbon, newest to oldest ("hot" = drawn while dashing)
+    const a = T[k], b = T[k - 1];
+    const hot = a.d;
+    const t = 1 - (now - a.t) / (hot ? 360 : 230);
+    if (t <= 0) continue;
+    if (a.t - b.t > 160) continue;                // a gap in the data (lost packets, standing still): never streak across it
+    ctx.globalAlpha = t * (hot ? 0.85 : 0.4);
+    ctx.strokeStyle = hot && n - 1 - k < 6 ? TAIL_HOT : col;
+    ctx.lineWidth = Math.max(1, 22 * t * (hot ? 1 : 0.6));
+    ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(a.x, a.y); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* 3-2-1-GO: the arena is blurred while it counts down; the digits are real page text on top, so they stay sharp */
+let cdEl = null, cdText = '', blurOn = false;
+function setBlur(on) {
+  if (on === blurOn) return;
+  blurOn = on;
+  const c = $('gameCanvas');
+  if (c) c.classList.toggle('mp-blur', on);
+}
+function showCount(M, text, go) {
+  if (cdEl && cdText === text) return;
+  if (cdEl) cdEl.remove();
+  cdText = text;
+  cdEl = el('div', 'mp-count' + (go ? ' go' : ''));
+  cdEl.appendChild(el('b', '', text));
+  if (!go) {
+    const h = el('div', 'mp-count-hint');
+    h.appendChild(el('span', 'me', 'YOU ARE CYAN'));
+    h.appendChild(document.createTextNode('  \u00B7  '));
+    h.appendChild(el('span', 'opp', ((M.opp && M.opp.name) || 'RIVAL').slice(0, 14).toUpperCase() + ' IS VIOLET'));
+    cdEl.appendChild(h);
+  }
+  frame().appendChild(cdEl);
+}
+function hideCount() {
+  if (cdEl) { cdEl.remove(); cdEl = null; }
+  cdText = '';
+  setBlur(false);
+}
+
 function drawMP(M, ctx, W, H, state) {
   if (Z.match !== M) return;
   const clock = (performance.now() - M.startPerf) / 1000;
   const R = M.rival;
+  let dashNow = false;
   // rival orb: always a round orb with a white rim and a name tag (hazards are sharp shapes, so they can not be confused)
   let p;
   if (M.ghost) {
     // ghost: driven by the shared match clock every frame (no network buffer), so it moves in lock-step with the player
     const g = ghostAt(M.ghost, Math.max(0, Math.min(MP.MATCH_SEC, clock)));
     p = { x: g.x, y: g.y };
+    const g0 = ghostAt(M.ghost, Math.max(0, Math.min(MP.MATCH_SEC, clock - 0.12)));      // a ghost has no dash flag: a burst of speed is a dash
+    dashNow = clock >= 0.12 && Math.hypot(g.x - g0.x, g.y - g0.y) / 0.12 > 520;
     if (clock >= 0) {
       R.seen = true; R.lastSeen = performance.now();
       if (g.score !== R.score) { R.score = g.score; R.scoreAt = clock; }
       if (g.dead && !R.dead) { R.dead = true; R.deadScore = g.score; R.deadAt = M.ghost.deadAt; }
     }
-  } else p = R.interp.at(performance.now() - MP.INTERP_MS);
+  } else {
+    p = R.interp.at(performance.now() - MP.INTERP_MS);
+    dashNow = !!(p && p.s && p.s.dash);        // the flag of the sample being drawn (the orb is ~110 ms behind the newest packet)
+  }
+  if (R.dead) dashNow = false;
+  const nowMs = performance.now();
+  trailStep(R, p, dashNow, nowMs);
+  if (p && !R.dead) drawTail(ctx, R, dashNow, nowMs);
   if (p) {
     ctx.save();
     ctx.translate(p.x, p.y);
@@ -1089,7 +1203,6 @@ function drawMP(M, ctx, W, H, state) {
       ctx.strokeStyle = '#C4B5FD'; ctx.lineWidth = 3; ctx.lineCap = 'round';
       ctx.beginPath(); ctx.moveTo(-9, -9); ctx.lineTo(9, 9); ctx.moveTo(9, -9); ctx.lineTo(-9, 9); ctx.stroke();
     } else {
-      if (R.dash) { ctx.scale(1.5, 0.8); }
       ctx.shadowColor = R.gd ? '#F59E0B' : '#A78BFA'; ctx.shadowBlur = R.gd ? 24 : 16;   // Ghost Drive: gold glow (same gold as your own Ghost Drive)
       for (let i = 1; i <= R.shields; i++) {
         ctx.strokeStyle = i === 2 ? 'rgba(167,139,250,0.75)' : 'rgba(196,181,253,0.9)';
@@ -1103,6 +1216,8 @@ function drawMP(M, ctx, W, H, state) {
         ctx.beginPath(); ctx.arc(0, 0, 11 + 3 * R.shields + 6, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
       }
+      ctx.save();
+      if (dashNow) { ctx.rotate(R.ang || 0); ctx.scale(1.7, 0.75); ctx.shadowBlur = 18; }
       ctx.globalAlpha = 0.95;
       ctx.fillStyle = R.gd ? '#C4B5FD' : '#A78BFA';
       ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
@@ -1111,6 +1226,7 @@ function drawMP(M, ctx, W, H, state) {
       ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = '#EDE9FE';
       ctx.beginPath(); ctx.arc(0, 0, 4, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
     }
     ctx.restore();
     ctx.save();
@@ -1134,27 +1250,20 @@ function drawMP(M, ctx, W, H, state) {
     }
     ctx.restore();
   }
-  // 3-2-1-GO
-  if (clock < 0 || (clock >= 0 && clock < 0.8)) {
-    const n = Math.ceil(-clock);
-    let text, frac;
-    if (clock < 0) { text = String(n); frac = 1 - (-clock - Math.floor(-clock)); if (frac >= 1) frac = 0; if (n !== M.lastCount) { M.lastCount = n; sfx.beep(); } }
-    else { text = 'GO!'; frac = clock / 0.8; if (!M.goPlayed) { M.goPlayed = true; sfx.go(); } }
-    const pop = 1 + 0.35 * Math.max(0, 1 - frac * 3);
-    ctx.save();
-    ctx.translate(W / 2, H / 2 - 40); ctx.scale(pop, pop);
-    ctx.globalAlpha = clock >= 0 ? 1 - frac : 1;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.font = 'bold 92px sans-serif'; ctx.lineWidth = 10; ctx.lineJoin = 'round';
-    ctx.strokeStyle = '#0A0A0A'; ctx.strokeText(text, 0, 0);
-    ctx.fillStyle = clock >= 0 ? '#4ADE80' : '#F8FAFC'; ctx.fillText(text, 0, 0);
-    ctx.restore();
+  // 3-2-1-GO: blur the arena (grid, drones, orbs) while it counts down, then sharpen it on GO
+  setBlur(clock < 0);
+  if (clock < 0.8) {
     if (clock < 0) {
-      ctx.save(); ctx.textAlign = 'center'; ctx.font = 'bold 14px sans-serif'; ctx.fillStyle = '#94A3B8';
-      ctx.fillText('YOU ARE GREEN  ·  ' + (R.name || 'RIVAL').toUpperCase() + ' IS RED', W / 2, H / 2 + 50);
-      ctx.restore();
+      const n = Math.ceil(-clock);
+      if (n <= MP.COUNTDOWN_SEC) {             // (the half second before "3" is still behind the VS screen: no digit, no beep)
+        if (n !== M.lastCount) { M.lastCount = n; sfx.beep(); }
+        showCount(M, String(n), false);
+      }
+    } else {
+      if (!M.goPlayed) { M.goPlayed = true; sfx.go(); }
+      showCount(M, 'GO!', true);
     }
-  }
+  } else hideCount();
 }
 
 /* ---------------------------------------------------------------------------
@@ -1177,7 +1286,7 @@ function showHud(M) {
   hud.appendChild(l); hud.appendChild(m); hud.appendChild(r);
   frame().appendChild(hud);
 }
-function hideHud() { if (hud) { hud.remove(); hud = null; } hideSpec(); }
+function hideHud() { if (hud) { hud.remove(); hud = null; } hideSpec(); hideCount(); }
 function updateHud(M, clock) {
   if (!hud) return;
   const st = bridge.getState();
@@ -1231,8 +1340,8 @@ function showResult(M) {
   const pills = el('div', 'mt-3 flex flex-wrap justify-center gap-2');
   if (r.rated) pills.appendChild(el('span', 'nb-pill c-cyan text-xs', 'RATING ' + stats.rating + ' (' + (r.delta >= 0 ? '+' : '') + r.delta + ')'));
   else if (M.kind === 'friend') pills.appendChild(el('span', 'nb-pill c-white text-xs', 'FRIENDLY: UNRATED'));
+  else if (M.kind === 'ghost') pills.appendChild(el('span', 'nb-pill c-white text-xs', (M.ghost && M.ghost.bot ? 'PRACTICE' : 'GHOST RUN') + ': UNRATED'));
   if (r.streak > 1) pills.appendChild(el('span', 'nb-pill c-orange text-xs', r.streak + ' WIN STREAK'));
-  pills.appendChild(el('span', 'nb-pill c-white text-xs', 'YOU ' + M.series.me + ' - ' + M.series.opp + ' THEM'));
   if (r.h2h) pills.appendChild(el('span', 'nb-pill c-white text-xs', 'ALL TIME ' + r.h2h.w + '-' + r.h2h.l));
   box.appendChild(pills);
   resultEl.rbtn = btn('REMATCH', 'retro-key-active', () => requestRematch(M));
@@ -1263,8 +1372,9 @@ function showVS(M) {
   vsEl.appendChild(el('div', 'mp-vs-tag', kind === 'friend' ? 'FRIENDLY DUEL' : kind === 'ghost' ? (M.ghost && M.ghost.bot ? 'PRACTICE MATCH' : 'GHOST RUN') : 'GLOBAL MATCH'));
   const side = (who, cls, rating, tag) => {
     const s = el('div', 'mp-vs-side ' + cls);
-    const av = avatar(116, who);
+    const av = avatar(116, who, true);
     av.classList.add('mp-vs-av');
+    s.avEl = av;
     s.appendChild(av);
     const n = el('div', 'mp-vs-name', who.name.toUpperCase()); s.appendChild(n);
     if (rating) s.appendChild(el('div', 'mp-vs-rating', tag + ' ' + rating));
@@ -1275,7 +1385,13 @@ function showVS(M) {
   const mark = el('div', 'mp-vs-mark');
   mark.appendChild(el('span', '', 'V')); mark.appendChild(el('em', '', '/')); mark.appendChild(el('span', '', 'S'));
   vsEl.appendChild(mark);
-  vsEl.appendChild(side({ name: M.opp.name || 'RIVAL', photo: M.opp.photo }, 'right', showR && M.opp.rating ? M.opp.rating : 0, M.ghost ? 'BEST' : 'RATING'));
+  const rightSide = side({ name: M.opp.name || 'RIVAL', photo: M.opp.photo }, 'right', showR && M.opp.rating ? M.opp.rating : 0, M.ghost ? 'BEST' : 'RATING');
+  vsEl.appendChild(rightSide);
+  // the rival's photo is fetched while the clocks sync; if it lands after this screen opened, swap it in place (never stay on the letter)
+  if (!M.opp.photo && M.oppInfo) {
+    const thisVs = vsEl;
+    M.oppInfo.then(() => { if (vsEl === thisVs && Z.match === M && M.opp.photo) fillAvatar(rightSide.avEl, { name: M.opp.name, photo: M.opp.photo }, true); });
+  }
   vsEl.appendChild(el('div', 'mp-vs-sub', '90 SECONDS  ·  BEST SCORE WINS'));
   document.body.appendChild(vsEl);
   const at = (ms, fn) => M.timers.push(setTimeout(fn, ms));

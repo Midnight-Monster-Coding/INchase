@@ -643,6 +643,11 @@ if (document.readyState === 'complete') syncSideMode(); else window.addEventList
 // --- public entry for this player ---
 let myMpRating = null;   // multiplayer rating (mpstats/{uid}); mirrored into leaderboard/{uid}.mpRating
 const mpField = () => (myMpRating != null ? { mpRating: myMpRating } : {});
+// rating shown in a leaderboard row: for MY row use my own known rating, so it can never blink away if the doc is behind
+function mpFor(uid, docValue) {
+  if (currentUser && uid === currentUser.uid && myMpRating != null) return myMpRating;
+  return Number(docValue) > 0 ? Math.round(Number(docValue)) : 0;
+}
 
 async function pushBoard(force) {
   const user = currentUser;
@@ -658,7 +663,7 @@ async function pushBoard(force) {
       best,
       ...mpField(),
       updatedAt: serverTimestamp()
-    });
+    }, { merge: true });   // merge: a save that does not know the rating (yet) must never erase it
     lastBoardSig = sig;
     log('leaderboard entry saved', best);
     return true;
@@ -688,7 +693,8 @@ window.addEventListener('inchase:mprating', (e) => {
   myMpRating = myMpShown = Math.round(d.rating);
   myMpStats = { wins: d.wins | 0, losses: d.losses | 0, draws: d.draws | 0 };
   const me = Board.rows.find((r) => currentUser && r.uid === currentUser.uid);
-  if (me) { me.mpRating = myMpRating; renderBoard(); }
+  if (me) me.mpRating = myMpRating;
+  renderBoard();
   fillAccountStats();
 });
 
@@ -724,7 +730,7 @@ function addRows(docs) {
       username: String(x.username || '?'),
       photoURL: typeof x.photoURL === 'string' ? x.photoURL : '',
       best,
-      mpRating: Number(x.mpRating) > 0 ? Math.round(Number(x.mpRating)) : 0,
+      mpRating: mpFor(d.id, x.mpRating),
       rank: prev && prev.best === best ? prev.rank : Board.rows.length + 1
     });
   });
@@ -997,7 +1003,7 @@ function renderBoard() {
     list.scrollTop = keep;
 
     if (showMe) {
-      me.appendChild(buildRow(myRank, { uid: profile.uid, username: profile.username, photoURL: profile.photoURL, best: boardBest() }, true));
+      me.appendChild(buildRow(myRank, { uid: profile.uid, username: profile.username, photoURL: profile.photoURL, best: boardBest(), mpRating: myMpRating || 0 }, true));
       me.classList.remove('lb-off');
     } else {
       me.classList.add('lb-off');
@@ -1119,7 +1125,7 @@ function setPhotoBusy(b) {
   ['photoChangeBtn', 'photoRemoveBtn', 'signOutBtn', 'accountCloseBtn'].forEach((id) => { $(id).disabled = b; });
 }
 
-// Centre-crop to a square, shrink to 128 px and encode as JPEG (keeps the upload a few KB)
+// Centre-crop to a square and encode it small: WebP at 256 px when the browser can, else JPEG at 128 px (a few KB either way)
 async function makeAvatarDataUrl(file) {
   const url = URL.createObjectURL(file);
   try {
@@ -1131,14 +1137,28 @@ async function makeAvatarDataUrl(file) {
     });
     const side = Math.min(img.naturalWidth, img.naturalHeight);
     if (!side) throw new Error('decode');
-    const c = document.createElement('canvas');
-    c.width = PHOTO_SIZE;
-    c.height = PHOTO_SIZE;
-    const g = c.getContext('2d');
-    g.fillStyle = '#FFFFFF';                   // transparent PNGs get a white background instead of black
-    g.fillRect(0, 0, PHOTO_SIZE, PHOTO_SIZE);
-    g.imageSmoothingQuality = 'high';
-    g.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, PHOTO_SIZE, PHOTO_SIZE);
+    const square = (px) => {
+      const cv = document.createElement('canvas');
+      cv.width = px;
+      cv.height = px;
+      const gx = cv.getContext('2d');
+      gx.fillStyle = '#FFFFFF';                // transparent PNGs get a white background instead of black
+      gx.fillRect(0, 0, px, px);
+      gx.imageSmoothingQuality = 'high';
+      gx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, px, px);
+      return cv;
+    };
+    // Best quality first: WebP at 256 px, then 192 px (same size budget as before, so the same Firestore rule holds).
+    // A browser that can not encode WebP returns a PNG here, so we skip straight to the JPEG path below.
+    for (const px of [256, 192]) {
+      const cw = square(px);
+      for (const wq of [0.92, 0.85, 0.78, 0.7, 0.62, 0.55]) {
+        const w = cw.toDataURL('image/webp', wq);
+        if (w.indexOf('data:image/webp') !== 0) break;
+        if (w.length <= PHOTO_SOFT_LIMIT) return w;
+      }
+    }
+    const c = square(PHOTO_SIZE);
     let q = 0.85;
     let out = c.toDataURL('image/jpeg', q);
     while (out.length > PHOTO_SOFT_LIMIT && q > 0.4) {
@@ -1168,7 +1188,7 @@ async function applyPhoto(dataUrl) {
     best,
     ...mpField(),
     updatedAt: serverTimestamp()
-  });
+  }, { merge: true });
   await batch.commit();
   profile = { ...profile, photoURL: photo, custom };
   lsSet(PROFILE_KEY, JSON.stringify(profile));

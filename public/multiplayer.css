@@ -102,7 +102,28 @@
   .mp-smoke i { animation: none; opacity: .5; }
   .mp-hud.surge .mp-hud-time, .mp-spin { animation: none; }
 }
-/* ---------- the MULTIPLAYER / VERSUS button: same chunky retro key as the other modes, in the game's pink ---------- */
-#mpBtn.retro-key.mp-special { position: relative; background-color: var(--pink); color: #0A0A0A; letter-spacing: .06em; }
-#mpBtn.retro-key.mp-special:hover:not(:disabled) { background-color: #FDA4AF; }
+/* ---------- the MULTIPLAYER / VERSUS button: same chunky retro key as the other modes, in violet (the rival's colour).
+   Violet, not pink: the orange notification dot on it has to stand out, and it vanished on pink. ---------- */
+#mpBtn.retro-key.mp-special { position: relative; background-color: #A78BFA; color: #0A0A0A; letter-spacing: .06em; }
+#mpBtn.retro-key.mp-special:hover:not(:disabled) { background-color: #C4B5FD; }
+#mpBtn .daily-dot { box-shadow: 0 0 0 2px #0A0A0A, 0 0 6px 2px rgba(249, 115, 22, 0.8); }
 #mpBtn.retro-key.mp-special .desk-only::before, #mpBtn.retro-key.mp-special .mob-only::before { content: '\2694\FE0E\00a0'; }
+
+/* ---------- 3-2-1-GO: the arena is blurred while it counts down; the digits are page text, so they stay sharp ---------- */
+#gameCanvas { transition: filter .35s ease; }
+#gameCanvas.mp-blur { filter: blur(6px) brightness(.8); }
+.mp-count { position: absolute; inset: 0; z-index: 7; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; pointer-events: none; text-align: center; }
+.mp-count b { font-size: clamp(64px, 24vmin, 120px); line-height: 1; font-weight: 700; color: #F8FAFC; text-shadow: 0 0 22px rgba(56,189,248,.55), 5px 5px 0 #0A0A0A; animation: mpCount .9s ease-out both; }
+.mp-count.go b { color: #4ADE80; text-shadow: 0 0 26px rgba(74,222,128,.6), 5px 5px 0 #0A0A0A; animation: mpGo .8s ease-out both; }
+.mp-count-hint { font-size: 11px; font-weight: 700; letter-spacing: .08em; color: #CBD5E1; text-shadow: 0 2px 0 rgba(0,0,0,.9); max-width: 92%; }
+.mp-count-hint .me { color: #38BDF8; }
+.mp-count-hint .opp { color: #C4B5FD; }
+@keyframes mpCount { 0% { transform: scale(1.7); opacity: 0; } 25% { transform: scale(1); opacity: 1; } 100% { transform: scale(.92); opacity: .9; } }
+@keyframes mpGo { 0% { transform: scale(.7); opacity: 0; } 20% { transform: scale(1.2); opacity: 1; } 100% { transform: scale(1.5); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .mp-count b, .mp-count.go b { animation: none; } #gameCanvas { transition: none; } }
+
+/* ---------- readable text on the result card and the menu: .nb-pill is always near-black, so on the dark "white" tile it vanished ---------- */
+.mp-result .nb-pill.c-white, .mp-card .nb-pill.c-white { color: var(--text); }
+
+/* ---------- VS screen: the avatar photo is drawn as sharp as the browser can ---------- */
+.mp-vs-av img { image-rendering: auto; -webkit-backface-visibility: hidden; backface-visibility: hidden; }
