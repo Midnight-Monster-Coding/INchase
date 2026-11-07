@@ -26,7 +26,7 @@ html.mob, html.mob body { overscroll-behavior: none; }
 .mob #strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .mob #modeBar {
   grid-column: 1 / -1; margin: 0;
-  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px;
 }
 .mob #strip button { min-height: 32px; align-items: center; justify-content: center; }
 .mob #strip #crtToggleBtn { display: none; }

@@ -627,6 +627,7 @@
     }
   </style>
   <link rel="stylesheet" href="responsiveness.css" />
+  <link rel="stylesheet" href="multiplayer.css">
   <script src="responsiveness.js"></script>
   <!-- Adaptive performance engine: must load before the game script -->
   <script src="inchase-perf.js"></script>
@@ -692,6 +693,7 @@
         <button type="button" data-mode="arcade" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">ARCADE</button>
         <button type="button" data-mode="blitz" class="retro-key px-2.5 py-1.5 rounded-lg text-xs">BLITZ</button>
         <button type="button" data-mode="daily" class="retro-key px-2.5 py-1.5 rounded-lg text-xs" title="Daily Run: one attempt a day, same challenge for everyone">DAILY<span id="dailyMark" class="daily-dot"></span></button>
+        <button type="button" id="mpBtn" class="retro-key c-lime px-2.5 py-1.5 rounded-lg text-xs" title="Multiplayer: 90 second duel against a friend or the world"><span class="desk-only">MULTIPLAYER</span><span class="mob-only">VERSUS</span><span id="mpDot" class="daily-dot hidden"></span></button>
       </div>
       <button id="audioToggleBtn" type="button" class="retro-key px-3 py-1.5 rounded-lg text-xs flex items-center gap-1.5" title="Toggle Synth Audio">
         <span id="audioDot" class="w-3 h-3 rounded-full border-2 border-black bg-emerald-400"></span>
@@ -1038,6 +1040,7 @@
 
   <!-- Firebase login + cloud save live in auth.js (config in firebase-config.js) -->
   <script type="module" src="auth.js"></script>
+  <script type="module" src="multiplayer.js"></script>
 
   <!-- ==================== GAME ENGINE & APPLICATION SCRIPT ==================== -->
   <script>
@@ -1206,10 +1209,19 @@
         h ^= h >>> 15;
         return h >>> 0;
       }
-      const SEED = { on: false, day: 0, spawnQ: 0, spawnH: 0, prism: 0 };
+      const SEED = { on: false, day: 0, spawnQ: 0, spawnH: 0, prism: 0, mp: false, k: 0 };
+      // MULTIPLAYER state (the logic is in section 10b; multiplayer.js drives it through a private handshake)
+      const MP_W = 800, MP_H = 450, MP_SEC = 90, MP_SURGE = 75, MP_COUNT = 3;
+      const MPX = {
+        active: false, fixed: false, starting: false, frozen: false, dead: false, timeUp: false,
+        s: 1, ox: 0, oy: 0, seed: 0, startPerf: 0, clockT: -MP_COUNT, wi: 1, si: 0, sched: null,
+        self: '#4ADE80', prevMode: 'arcade', draw: null, onEnd: null
+      };
       // kind: 1 = spawn warning position, 2 = hazard type/speed/life, 3 = green target
       function streamRng(kind) {
         if (!SEED.on) return Math.random;
+        // Multiplayer: spawn number k always gets the same generator, whatever happened before (no order drift)
+        if (SEED.mp && kind !== 3) return mulberry32(mixSeed(SEED.day * 7919 + 12345, kind, SEED.k));
         const idx = kind === 1 ? SEED.spawnQ++ : (kind === 2 ? SEED.spawnH++ : SEED.prism++);
         return mulberry32(mixSeed(SEED.day * 7919 + 12345, kind, idx));
       }
@@ -1240,6 +1252,7 @@
       const pendY = new Float32Array(MAX_PEND);
       const pendT = new Float32Array(MAX_PEND);
       const pendBoss = new Uint8Array(MAX_PEND);
+      const pendK = new Uint16Array(MAX_PEND);   // multiplayer: schedule index of each pending spawn
       let pendCount = 0;
       // Position at the start of the current simulation step (needed for swept collision)
       const entPX = new Float32Array(MAX_ENTITIES);
@@ -1942,6 +1955,7 @@
 
       // The only two ways to change the score: green +100, dash -25 (shown live, not logged)
       function addPoints(delta) {
+        if (MPX.active && delta > 0 && MPX.clockT >= MP_SURGE) delta *= 2;   // multiplayer "Final Surge": last 15 s count double
         Game.score += delta;
         updateScoreUI();
         flashScoreDelta(delta);
@@ -1992,6 +2006,7 @@
       }
       // One place that changes the mode: the buttons above the arena and the "PLAY ARCADE" shortcut both use it
       function setMode(next) {
+        if (MPX.active) return;
         const prevMode = Game.mode;
         Game.mode = next;
         updateHUD();
@@ -2350,11 +2365,25 @@
       function resizeCanvas() {
         const holder = canvas.parentElement;
         dpr = Math.min(window.devicePixelRatio || 1, 2);
-        arenaW = Math.max(200, Math.floor(holder.clientWidth));
-        arenaH = Math.max(140, Math.floor(holder.clientHeight));
-        canvas.width = arenaW * dpr;
-        canvas.height = arenaH * dpr;
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        if (MPX.fixed) {
+          // Multiplayer: both players play on the SAME 800x450 field, scaled to fit (letterboxed)
+          const hw = Math.max(200, Math.floor(holder.clientWidth));
+          const hh = Math.max(140, Math.floor(holder.clientHeight));
+          arenaW = MP_W;
+          arenaH = MP_H;
+          canvas.width = hw * dpr;
+          canvas.height = hh * dpr;
+          MPX.s = Math.min(hw / MP_W, hh / MP_H);
+          MPX.ox = (hw - MP_W * MPX.s) / 2;
+          MPX.oy = (hh - MP_H * MPX.s) / 2;
+          ctx.setTransform(dpr * MPX.s, 0, 0, dpr * MPX.s, dpr * MPX.ox, dpr * MPX.oy);
+        } else {
+          arenaW = Math.max(200, Math.floor(holder.clientWidth));
+          arenaH = Math.max(140, Math.floor(holder.clientHeight));
+          canvas.width = arenaW * dpr;
+          canvas.height = arenaH * dpr;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }
 
         Player.x = Math.max(Player.radius, Math.min(arenaW - Player.radius, Player.x));
         Player.y = Math.max(Player.radius, Math.min(arenaH - Player.radius, Player.y));
@@ -2456,6 +2485,12 @@
       function pickTwist(w) {
         // Arcade stays plain. Blitz gets a new random twist every wave, starting with wave 1.
         if (Game.mode !== 'blitz') return TWISTS[0];
+        if (SEED.mp) {   // multiplayer: the twist of wave w is the same for both players
+          const n = 1 + (mixSeed(SEED.day, 77, w) % (TWISTS.length - 1));
+          let tw = TWISTS[n];
+          if (tw === Game.twist) tw = TWISTS[1 + (n % (TWISTS.length - 1))];
+          return tw;
+        }
         let t;
         do { t = TWISTS[1 + ((Math.random() * (TWISTS.length - 1)) | 0)]; } while (t === Game.twist);
         return t;
@@ -2469,7 +2504,7 @@
         Game.bannerSub = 'WAVE ' + w + (Game.bossPending && Game.twist.name ? ' \u00B7 ' + Game.twist.name : '');
         Game.bannerT = (Game.mode === 'blitz' && Game.bannerText) ? 2.2 : 0;
         if (Game.twist.prism) {
-          const ang = Math.random() * Math.PI * 2;
+          const ang = (SEED.mp ? mulberry32(mixSeed(SEED.day, 78, w))() : Math.random()) * Math.PI * 2;
           Prism.vx = Math.cos(ang) * 60;
           Prism.vy = Math.sin(ang) * 60;
         } else {
@@ -2522,6 +2557,7 @@
 
       function triggerPhaseDash() {
         if (Game.state !== 'playing') return;
+        if (MPX.active && (MPX.frozen || MPX.clockT < 0)) return;
         if (Player.dashCooldown > 0 && Game.overdriveTimer <= 0) return;
 
         // Rule: Tapping Dash deducts 25 points from score
@@ -2619,6 +2655,7 @@
 
       function triggerGhostDrive() {
         if (Game.state !== 'playing') return;
+        if (MPX.active && (MPX.frozen || MPX.clockT < 0)) return;
         if (Game.overdriveCharge < 100 || Game.overdriveTimer > 0) return;
 
         Game.overdriveCharge = 0;
@@ -2641,11 +2678,19 @@
       }
 
       function stepSimulation(dt) {
+        // Multiplayer: the match clock is REAL time (hit-stop, slow-motion and lag can not stretch the 90 s)
+        if (MPX.active) {
+          MPX.clockT = (performance.now() - MPX.startPerf) / 1000;
+          Game.blitzTimeLeft = Math.max(0, MP_SEC - MPX.clockT);
+          if (MPX.frozen) { mpFrozenStep(dt); return; }
+          if (MPX.clockT < 0) return;                       // 3-2-1 countdown
+          if (MPX.clockT >= MP_SEC) { endGame('TIME UP'); return; }
+        }
         // New-best freeze (timer runs down in loop())
         if (Game.pbFreeze > 0) return;
         // Hit-stop: a very short freeze on shield loss or 3+ shatters
         if (Game.hitStop > 0) { Game.hitStop -= dt; return; }
-        if (Game.mode === 'blitz') {
+        if (Game.mode === 'blitz' && !MPX.active) {
           Game.blitzTimeLeft -= dt;
           if (Game.blitzTimeLeft <= 0) {
             Game.blitzTimeLeft = 0;
@@ -2674,12 +2719,15 @@
         for (let p = pendCount - 1; p >= 0; p--) {
           pendT[p] -= dt;
           if (pendT[p] <= 0) {
+            if (SEED.mp) SEED.k = pendK[p];
             spawnHazardAt(pendX[p], pendY[p], pendBoss[p]);
             const last = --pendCount;
-            if (p !== last) { pendX[p] = pendX[last]; pendY[p] = pendY[last]; pendT[p] = pendT[last]; pendBoss[p] = pendBoss[last]; }
+            if (p !== last) { pendX[p] = pendX[last]; pendY[p] = pendY[last]; pendT[p] = pendT[last]; pendBoss[p] = pendBoss[last]; pendK[p] = pendK[last]; }
           }
         }
-        if (Game.calmTimer > 0) {
+        if (MPX.active) {
+          mpWaveFlow();   // multiplayer: waves and spawns follow a fixed schedule on the match clock
+        } else if (Game.calmTimer > 0) {
           Game.calmTimer -= dt;
           if (Game.calmTimer <= 0) {
             Game.calmTimer = 0;
@@ -3081,7 +3129,15 @@
       // 4: Outer shield (violet), 5: Inner shield (lime)
 
       function renderArena() {
+        if (MPX.fixed) {   // multiplayer: wipe the letterbox bars, then draw only inside the 800x450 field
+          ctx.save();
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.fillStyle = '#05070B';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.restore();
+        }
         ctx.save();
+        if (MPX.fixed) { ctx.beginPath(); ctx.rect(0, 0, arenaW, arenaH); ctx.clip(); }
         ctx.fillStyle = '#0B0E14';
         ctx.fillRect(0, 0, arenaW, arenaH);
 
@@ -3417,11 +3473,11 @@
         if (Player.dashT > 0) {
           ctx.rotate(Player.dashAngle);
           ctx.scale(1.7, 0.75);
-          ctx.shadowColor = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
+          ctx.shadowColor = Game.overdriveTimer > 0 ? COLORS[3] : (MPX.active ? MPX.self : COLORS[0]);
           ctx.shadowBlur = 18;
         }
         ctx.globalAlpha = Player.dashT > 0 ? 1 : blink;
-        ctx.fillStyle = Game.overdriveTimer > 0 ? COLORS[3] : COLORS[0];
+        ctx.fillStyle = Game.overdriveTimer > 0 ? COLORS[3] : (MPX.active ? MPX.self : COLORS[0]);
         ctx.beginPath();
         ctx.arc(0, 0, Player.radius, 0, Math.PI * 2);
         ctx.fill();
@@ -3431,6 +3487,8 @@
         ctx.arc(0, 0, Player.radius * 0.42, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+
+        if (MPX.active && MPX.draw) MPX.draw(ctx, arenaW, arenaH, Game.state);   // rival orb, countdown, spectate bar
 
         if (Game.bannerT > 0 && Game.state === 'playing') {
           ctx.save();
@@ -3490,7 +3548,8 @@
       function loop(ts) {
         if (Game.state !== 'playing') return;
         if (!Game.lastFrameTs) Game.lastFrameTs = ts;
-        const dt = Math.min(0.05, (ts - Game.lastFrameTs) / 1000);
+        const rawDt = (ts - Game.lastFrameTs) / 1000;
+        const dt = Math.min(0.05, rawDt);
         Game.lastFrameTs = ts;
 
         // Celebration timers run on real time so the freeze always ends
@@ -3498,7 +3557,14 @@
         if (Game.flashT > 0) Game.flashT -= dt;
         if (Game.pbT > 0) Game.pbT -= dt;
 
-        stepSimulation(dt);
+        if (MPX.active) {
+          // a slow phone must not get slow motion: the clock keeps running, so simulate the real time in small steps
+          const total = Math.min(0.25, Math.max(0, rawDt));
+          const n = Math.max(1, Math.ceil(total / 0.033));
+          for (let i = 0; i < n && Game.state === 'playing'; i++) stepSimulation(total / n);
+        } else {
+          stepSimulation(dt);
+        }
         renderArena();
 
         if (Game.state === 'playing') {
@@ -3507,6 +3573,7 @@
       }
 
       function startNewRun() {
+        if (MPX.active && !MPX.starting) return;   // a multiplayer match can not be restarted with R / NEW RUN / Space
         // Daily Run is for logged-in players only: guests are sent to the login window
         if (Game.mode === 'daily' && !dailyAllowed()) {
           showToast('LOGIN TO PLAY THE DAILY RUN');
@@ -3531,7 +3598,7 @@
         Game.state = 'playing';
         endSnap = null;
         hideDailyUI();
-        if (Game.mode === 'daily') beginDailyRun(); else SEED.on = false;   // must come before the first spawn / green target
+        if (Game.mode === 'daily') beginDailyRun(); else if (MPX.active) mpSeedBegin(); else { SEED.on = false; SEED.mp = false; }   // must come before the first spawn / green target
 
         // New-best celebration: remember the score to beat (arcade and blitz each have their own best)
         Game.pbTarget = 0;
@@ -3603,6 +3670,7 @@
       }
 
       function togglePause() {
+        if (MPX.active) return;   // nobody can pause a live duel (rotation, popups and hidden tabs included)
         if (Game.state === 'playing') {
           Game.state = 'paused';
           if (Game.rafId) {
@@ -3640,6 +3708,7 @@
       }
 
       function endGame(reasonTitle) {
+        if (MPX.active) { mpEnd(reasonTitle); return; }
         Game.state = 'gameover';
         if (Game.rafId) {
           cancelAnimationFrame(Game.rafId);
@@ -3717,6 +3786,215 @@
         renderArena();
       }
 
+
+      /* =========================================================================
+       * 10b. MULTIPLAYER ENGINE SIDE
+       *      multiplayer.js (Firebase + WebRTC + UI) drives this through mpBridge.
+       *      Both players run the SAME seeded match on their own device:
+       *      same field (800x450), same spawn schedule on the same clock, same twists.
+       * ========================================================================= */
+      // Waves are scheduled by time, not by "how many hazards are alive", so both devices spawn spawn #k at the same moment.
+      function buildMpSchedule() {
+        const waves = [];
+        const spawns = [];
+        let t = 0.5;
+        let k = 0;
+        for (let w = 1; t < MP_SEC + 5; w++) {
+          waves.push({ t, w });
+          const gap = Math.max(0.55, Math.min(1.6, 7.2 / hazardCapFor(w)));
+          let st = t + 0.3;
+          if (w % 5 === 0) { spawns.push({ t: st, k: k++, boss: true }); st += gap; }
+          for (let i = 0, n = waveBudgetFor(w); i < n; i++) { spawns.push({ t: st, k: k++, boss: false }); st += gap; }
+          t = st + SPAWN_WARN + CALM_TIME;
+        }
+        return { waves, spawns };
+      }
+      function mpSeedBegin() {
+        SEED.on = true;
+        SEED.mp = true;
+        SEED.day = MPX.seed >>> 0;
+        SEED.spawnQ = 0;
+        SEED.spawnH = 0;
+        SEED.prism = 0;
+        SEED.k = 0;
+        Game.twist = null;   // wave 1 must not depend on the previous match
+        MPX.sched = buildMpSchedule();
+        MPX.wi = 1;          // wave 1 is started by startNewRun itself
+        MPX.si = 0;
+        MPX.frozen = false;
+        MPX.dead = false;
+        MPX.timeUp = false;
+      }
+      function mpQueueSpawn(ev) {
+        if (pendCount >= MAX_PEND) return;
+        SEED.k = ev.k;
+        const rng = streamRng(1);
+        const edge = (rng() * 4) | 0;
+        let x, y;
+        if (edge === 0) { x = rng() * arenaW; y = 20; }
+        else if (edge === 1) { x = arenaW - 20; y = rng() * arenaH; }
+        else if (edge === 2) { x = rng() * arenaW; y = arenaH - 20; }
+        else { x = 20; y = rng() * arenaH; }
+        pendX[pendCount] = x;
+        pendY[pendCount] = y;
+        pendT[pendCount] = SPAWN_WARN;
+        pendBoss[pendCount] = ev.boss ? 1 : 0;
+        pendK[pendCount] = ev.k;
+        pendCount++;
+      }
+      function mpWaveFlow() {
+        const t = MPX.clockT;
+        const sc = MPX.sched;
+        while (MPX.wi < sc.waves.length && sc.waves[MPX.wi].t <= t) {
+          const wv = sc.waves[MPX.wi++];
+          Game.waveHit = false;
+          Game.wave = wv.w;
+          startWave(wv.w);
+          if (Game.shields < 2) {   // every new wave restores both shields, same as Blitz
+            Game.shields = 2;
+            Synth.playShieldRestore();
+            spawnShockwave(Player.x, Player.y, 95, 4);
+            emitBurst(Player.x, Player.y, 14, 170, 4);
+          }
+        }
+        while (MPX.si < sc.spawns.length && sc.spawns[MPX.si].t <= t) mpQueueSpawn(sc.spawns[MPX.si++]);
+      }
+      // Frozen (dead / time up / waiting for the result): only the effects keep moving, the field itself stands still
+      function mpFrozenStep(dt) {
+        if (Game.shakeTime > 0) Game.shakeTime = Math.max(0, Game.shakeTime - dt);
+        if (Game.bannerT > 0) Game.bannerT -= dt;
+        const pDamp = damp(0.94, dt);
+        for (let i = partCount - 1; i >= 0; i--) {
+          partLife[i] -= dt;
+          if (partLife[i] <= 0) {
+            const last = --partCount;
+            if (i !== last) {
+              partX[i] = partX[last]; partY[i] = partY[last]; partVX[i] = partVX[last]; partVY[i] = partVY[last];
+              partLife[i] = partLife[last]; partMaxLife[i] = partMaxLife[last]; partSize[i] = partSize[last]; partColorId[i] = partColorId[last];
+            }
+          } else {
+            partX[i] += partVX[i] * dt; partY[i] += partVY[i] * dt; partVX[i] *= pDamp; partVY[i] *= pDamp;
+          }
+        }
+        for (let i = waveCount - 1; i >= 0; i--) {
+          waveR[i] += (waveMaxR[i] - waveR[i]) * Math.min(1, dt * 11);
+          waveAlpha[i] -= dt * 2.6;
+          if (waveAlpha[i] <= 0) {
+            const last = --waveCount;
+            if (i !== last) {
+              waveX[i] = waveX[last]; waveY[i] = waveY[last]; waveR[i] = waveR[last]; waveMaxR[i] = waveMaxR[last];
+              waveAlpha[i] = waveAlpha[last]; waveColorId[i] = waveColorId[last];
+            }
+          }
+        }
+      }
+      function mpEnd(reason) {
+        if (MPX.frozen) return;
+        MPX.frozen = true;
+        const ev = { type: reason === 'TIME UP' ? 'time' : 'dead', score: Game.score, wave: Game.wave, at: Math.max(0, MPX.clockT) };
+        if (ev.type === 'dead') {
+          MPX.dead = true;
+          spawnShockwave(Player.x, Player.y, 190, 2);
+          emitBurst(Player.x, Player.y, 40, 320, 2);
+          Game.shakeTime = 0.35;
+          Game.shakeMag = 12;
+          Player.x = -300;   // the orb is gone; multiplayer.js keeps sending the last real position
+          Player.y = -300;
+        } else {
+          MPX.timeUp = true;
+        }
+        if (MPX.onEnd) MPX.onEnd(ev);
+      }
+
+      const mpBridge = {
+        canStart: () => !MPX.active && (Game.state === 'idle' || Game.state === 'gameover'),
+        isActive: () => MPX.active,
+        // cfg: { seed, startPerf (performance.now() of match second 0), selfColor, draw(ctx,w,h,state), onEnd(ev) }
+        begin: (cfg) => {
+          if (!MPX.active) MPX.prevMode = Game.mode;
+          MPX.active = true;
+          MPX.fixed = true;
+          MPX.seed = cfg.seed >>> 0;
+          MPX.startPerf = cfg.startPerf;
+          MPX.self = cfg.selfColor || '#4ADE80';
+          MPX.draw = cfg.draw || null;
+          MPX.onEnd = cfg.onEnd || null;
+          MPX.clockT = (performance.now() - MPX.startPerf) / 1000;
+          Game.mode = 'blitz';   // multiplayer uses Blitz rules (twists, boss wave); its results never touch the Blitz best
+          hideDailyUI();
+          UI.canvasOverlay.classList.add('hidden');
+          UI.nearMsg.classList.add('hidden');
+          resizeCanvas();
+          MPX.starting = true;
+          try { startNewRun(); } finally { MPX.starting = false; }
+          Game.pbTarget = 0;
+          Game.pbDone = true;
+          UI.pauseGameBtn.disabled = true;
+          Keys.up = Keys.down = Keys.left = Keys.right = false;
+        },
+        getState: () => ({
+          x: Player.x, y: Player.y, score: Game.score, shields: Game.shields, wave: Game.wave,
+          dead: MPX.dead, dash: Player.dashT > 0, surge: MPX.clockT >= MP_SURGE, clockT: MPX.clockT
+        }),
+        // result is known: stop the loop and show the last frame
+        finish: () => {
+          if (!MPX.active) return;
+          MPX.frozen = true;
+          Game.state = 'gameover';
+          Game.endTs = performance.now();
+          if (Game.rafId) { cancelAnimationFrame(Game.rafId); Game.rafId = null; }
+          UI.pauseGameBtn.disabled = true;
+          renderArena();
+        },
+        // back to the normal game
+        leave: () => {
+          if (!MPX.active) return;
+          if (Game.rafId) { cancelAnimationFrame(Game.rafId); Game.rafId = null; }
+          MPX.active = false;
+          MPX.fixed = false;
+          MPX.frozen = false;
+          MPX.dead = false;
+          MPX.draw = null;
+          MPX.onEnd = null;
+          SEED.on = false;
+          SEED.mp = false;
+          Game.mode = MPX.prevMode || 'arcade';
+          Game.state = 'idle';
+          Game.score = 0;
+          Game.wave = 1;
+          Game.shields = 2;
+          Game.blitzTimeLeft = 90;
+          Game.twist = null;
+          Game.bannerT = 0;
+          Game.shakeTime = 0;
+          entCount = 0; pendCount = 0; partCount = 0; waveCount = 0;
+          resizeCanvas();
+          Player.x = arenaW * 0.5;
+          Player.y = arenaH * 0.5;
+          for (let i = 0; i < 5; i++) queueSpawn();
+          for (let q = 0; q < pendCount; q++) spawnHazardAt(pendX[q], pendY[q]);
+          pendCount = 0;
+          UI.pauseGameBtn.disabled = true;
+          UI.pauseBtnText.textContent = 'PAUSE';
+          updateScoreUI();
+          updateHUD();
+          syncIdleOverlay();
+          UI.canvasOverlay.classList.remove('hidden');
+          renderArena();
+        },
+        tone: (f, type, d, g, slide) => Synth.tone(f, type, d, g, slide),
+        initAudio: () => Synth.init(),
+        toast: (m) => showToast(m),
+        isLoggedIn: () => dailyAllowed(),
+        openLogin: () => { if (authApi && authApi.openLogin) authApi.openLogin(); },
+        bests: () => {
+          let blitz = 0;
+          try { blitz = Number(localStorage.getItem('inchase_blitz_best')) || 0; } catch (e) { /* ignore */ }
+          return { arcade: store.best, blitz };
+        },
+        isIdle: () => Game.state === 'idle' || Game.state === 'gameover'
+      };
+
       /* =========================================================================
        * 11. EVENT LISTENERS
        * ========================================================================= */
@@ -3776,8 +4054,10 @@
       // Pointer & Mouse Button Handling on Canvas
       function updatePointerCoords(clientX, clientY) {
         const rect = canvas.getBoundingClientRect();
-        Player.pointerX = Math.max(0, Math.min(arenaW, clientX - rect.left));
-        Player.pointerY = Math.max(0, Math.min(arenaH, clientY - rect.top));
+        const px = MPX.fixed ? (clientX - rect.left - MPX.ox) / MPX.s : clientX - rect.left;
+        const py = MPX.fixed ? (clientY - rect.top - MPX.oy) / MPX.s : clientY - rect.top;
+        Player.pointerX = Math.max(0, Math.min(arenaW, px));
+        Player.pointerY = Math.max(0, Math.min(arenaH, py));
         Player.pointerActive = true;
       }
 
@@ -4040,6 +4320,12 @@
         if (authApi || !api) return null;
         authApi = api;
         return bridge;
+      };
+
+      // Second one-time handshake, same pattern: multiplayer.js receives the multiplayer bridge, nothing stays on window.
+      window.__inchaseMPLink = function () {
+        delete window.__inchaseMPLink;
+        return mpBridge;
       };
 
       window.onload = function () {
