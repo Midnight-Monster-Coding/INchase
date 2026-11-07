@@ -102,10 +102,7 @@
   .mp-smoke i { animation: none; opacity: .5; }
   .mp-hud.surge .mp-hud-time, .mp-spin { animation: none; }
 }
-/* ---------- the MULTIPLAYER / VERSUS button: a special button, not a normal mode key ---------- */
-#mpBtn.retro-key.mp-special { position: relative; color: #FFFFFF; text-shadow: 0 2px 0 rgba(0,0,0,.55); letter-spacing: .08em; background: linear-gradient(115deg, #7C3AED 0%, #C026D3 48%, #F97316 100%); background-size: 200% 100%; border-color: #0A0A0A; animation: mpBtnShine 3.2s ease-in-out infinite, mpBtnGlow 2s ease-in-out infinite alternate; }
-#mpBtn.retro-key.mp-special:hover { filter: brightness(1.12); }
+/* ---------- the MULTIPLAYER / VERSUS button: same chunky retro key as the other modes, in the game's pink ---------- */
+#mpBtn.retro-key.mp-special { position: relative; background-color: var(--pink); color: #0A0A0A; letter-spacing: .06em; }
+#mpBtn.retro-key.mp-special:hover:not(:disabled) { background-color: #FDA4AF; }
 #mpBtn.retro-key.mp-special .desk-only::before, #mpBtn.retro-key.mp-special .mob-only::before { content: '\2694\FE0E\00a0'; }
-@keyframes mpBtnShine { 0%, 100% { background-position: 0% 0; } 50% { background-position: 100% 0; } }
-@keyframes mpBtnGlow { from { box-shadow: 0 0 0 rgba(192,38,211,0); } to { box-shadow: 0 0 14px rgba(192,38,211,.75); } }
-@media (prefers-reduced-motion: reduce) { #mpBtn.retro-key.mp-special { animation: none; } }

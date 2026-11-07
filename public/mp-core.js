@@ -152,12 +152,12 @@ export function quantY(y) { return Math.round(clamp(y, 0, MP.ARENA_H) * QY); }
 export function dequantX(q) { return q / QX; }
 export function dequantY(q) { return q / QY; }
 
-// flags: bit0 dead | bit1 dashing | bit2-3 shields (0..2) | bit4 ghost-drive
+// flags: bit0 dead | bit1 dashing | bit2-3 shields (0..2) | bit4 final surge | bit5 Ghost Drive (gold)
 export function packFlags(f) {
-  return (f.dead ? 1 : 0) | (f.dash ? 2 : 0) | ((Math.max(0, Math.min(2, f.shields | 0))) << 2) | (f.surge ? 16 : 0);
+  return (f.dead ? 1 : 0) | (f.dash ? 2 : 0) | ((Math.max(0, Math.min(2, f.shields | 0))) << 2) | (f.surge ? 16 : 0) | (f.gd ? 32 : 0);
 }
 export function unpackFlags(n) {
-  return { dead: !!(n & 1), dash: !!(n & 2), shields: (n >> 2) & 3, surge: !!(n & 16) };
+  return { dead: !!(n & 1), dash: !!(n & 2), shields: (n >> 2) & 3, surge: !!(n & 16), gd: !!(n & 32) };
 }
 // "P,seq,tMs,xq,yq,score,flags,wave"  (about 30 bytes)
 export function encodeSnap(s) {
@@ -171,7 +171,7 @@ export function decodeSnap(str) {
   const n = new Array(7);
   for (let i = 0; i < 7; i++) { n[i] = Number(p[i + 1]); if (!Number.isFinite(n[i])) return null; }
   const f = unpackFlags(n[5]);
-  return { seq: n[0], t: n[1], x: dequantX(n[2]), y: dequantY(n[3]), score: n[4], dead: f.dead, dash: f.dash, shields: f.shields, surge: f.surge, wave: n[6] };
+  return { seq: n[0], t: n[1], x: dequantX(n[2]), y: dequantY(n[3]), score: n[4], dead: f.dead, dash: f.dash, shields: f.shields, surge: f.surge, gd: f.gd, wave: n[6] };
 }
 
 /* ---------------------------------------------------------------- interpolation buffer */

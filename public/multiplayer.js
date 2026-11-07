@@ -846,7 +846,7 @@ function onPos(M, s) {
   if (!R.interp.push({ seq: d.seq, t: d.t + M.skew, x: d.x, y: d.y })) return;
   R.lastSeen = performance.now(); R.seen = true;
   if (d.score !== R.score) { R.score = d.score; R.scoreAt = Math.max(0, (performance.now() - M.startPerf) / 1000); }
-  R.shields = d.shields; R.dash = d.dash;
+  R.shields = d.shields; R.dash = d.dash; R.gd = !!d.gd;
   if (d.dead && !R.dead) { R.dead = true; R.deadScore = d.score; R.deadAt = R.scoreAt; }   // backup for a late 'dead' message
 }
 
@@ -923,7 +923,7 @@ function tick(M) {
     for (let gi = Math.floor(clock * MP.GHOST_HZ); M.rec.pos.length <= gi && M.rec.pos.length <= MP.MATCH_SEC * MP.GHOST_HZ;) M.rec.pos.push(pos);
     for (let si = Math.floor(clock); M.rec.scores.length <= si && M.rec.scores.length <= MP.MATCH_SEC;) M.rec.scores.push(score);
   }
-  if (M.peer) M.peer.sendPos(encodeSnap({ seq: ++M.seq, t: performance.now(), x: pos[0], y: pos[1], score, dead, dash: st.dash, shields: dead ? 0 : st.shields, surge: st.surge, wave: st.wave }));
+  if (M.peer) M.peer.sendPos(encodeSnap({ seq: ++M.seq, t: performance.now(), x: pos[0], y: pos[1], score, dead, dash: st.dash, shields: dead ? 0 : st.shields, surge: st.surge, gd: !dead && !!st.gd, wave: st.wave }));
   if (M.ghost && clock >= 0) feedGhost(M, clock);
   if ((++M.hudN) % 3 === 0) updateHud(M, clock);
   evaluate(M);
@@ -1090,15 +1090,21 @@ function drawMP(M, ctx, W, H, state) {
       ctx.beginPath(); ctx.moveTo(-9, -9); ctx.lineTo(9, 9); ctx.moveTo(9, -9); ctx.lineTo(-9, 9); ctx.stroke();
     } else {
       if (R.dash) { ctx.scale(1.5, 0.8); }
-      ctx.shadowColor = '#A78BFA'; ctx.shadowBlur = 16;
+      ctx.shadowColor = R.gd ? '#F59E0B' : '#A78BFA'; ctx.shadowBlur = R.gd ? 24 : 16;   // Ghost Drive: gold glow (same gold as your own Ghost Drive)
       for (let i = 1; i <= R.shields; i++) {
         ctx.strokeStyle = i === 2 ? 'rgba(167,139,250,0.75)' : 'rgba(196,181,253,0.9)';
         ctx.lineWidth = 2; ctx.setLineDash(i === 2 ? [6, 4] : []);
         ctx.beginPath(); ctx.arc(0, 0, 11 + 3 * i, 0, Math.PI * 2); ctx.stroke();
       }
       ctx.setLineDash([]);
+      if (R.gd) {   // rival is in Ghost Drive: dashed gold ring just outside the orb/shields, like yours, but pulsing so it reads from afar
+        const pulse = 0.65 + 0.35 * Math.sin(performance.now() / 110);
+        ctx.strokeStyle = '#F59E0B'; ctx.lineWidth = 2.5; ctx.globalAlpha = pulse; ctx.setLineDash([4, 3]);
+        ctx.beginPath(); ctx.arc(0, 0, 11 + 3 * R.shields + 6, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+      }
       ctx.globalAlpha = 0.95;
-      ctx.fillStyle = '#A78BFA';
+      ctx.fillStyle = R.gd ? '#C4B5FD' : '#A78BFA';
       ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI * 2); ctx.fill();
       ctx.shadowBlur = 0;
       ctx.strokeStyle = '#FFFFFF'; ctx.lineWidth = 2;
@@ -1109,7 +1115,7 @@ function drawMP(M, ctx, W, H, state) {
     ctx.restore();
     ctx.save();
     ctx.font = 'bold 11px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = '#DDD6FE';
+    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(0,0,0,0.85)'; ctx.fillStyle = R.gd ? '#FCD34D' : '#DDD6FE';
     const label = (M.ghost ? 'GHOST ' : '') + (R.name || '').slice(0, 14);
     const ty = Math.max(14, p.y - 24);
     ctx.strokeText(label, p.x, ty); ctx.fillText(label, p.x, ty);

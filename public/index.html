@@ -499,9 +499,10 @@
     }
     .lb-score { font-size: 11px; white-space: nowrap; }
     .lb-sc { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; line-height: 1.05; }
-    .lb-mp { font-size: 8px; font-weight: 700; letter-spacing: .04em; white-space: nowrap; color: #7C3AED; }
-    html:not(.light-mode) .lb-row:not(.me) .lb-mp { color: #C4B5FD; }
-    #lbSide .lb-mp { font-size: 10px; }
+    /* multiplayer rating: a small pink retro chip (same pink as the MULTIPLAYER key) so it reads as a second score, not a footnote */
+    .lb-mp { margin-top: 1px; padding: 0 4px; font-size: 8px; font-weight: 700; letter-spacing: .05em; line-height: 1.1; white-space: nowrap; color: #0A0A0A; background: var(--pink); border: 2px solid var(--ink); border-radius: 5px; box-shadow: 1px 1px 0 var(--ink); }
+    .lb-row.me .lb-mp { background: #FFFFFF; }
+    #lbSide .lb-mp { font-size: 10px; padding: 0 5px; }
     #dailyModal .lb-mp { display: none; }
     .acc-mp { background: #0A0A0A; border: 3px solid #A78BFA; color: #C4B5FD; box-shadow: 3px 3px 0 var(--ink); }
     .lb-note { font-size: 10px; opacity: 0.7; padding: 6px 2px; text-align: center; line-height: 1.4; }
@@ -857,7 +858,7 @@
         <li><span class="nb-pill c-pink" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">SHAPES</span> Diamonds drift. Arrows chase you. Spiked cores are slow. In Blitz, triangles snake side to side, big hexagons are slow but wide, thin needles creep then lunge, and sizes vary a little. All red shapes cost a shield.</li>
         <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">LAST CHANCE</span> At 0 shields, time slows once per wave when a drone is about to hit you.</li>
         <li><span class="nb-pill c-cyan" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">BLITZ</span> A 90 second timed run. Every wave brings a new twist, shown as a banner: SEEKER SWARM, DRIFTER RAIN, SPIKE FIELD, MOVING PRISM, WEAVER WAVE or TITAN WAVE. Every 5th wave adds a big boss drone. Its best score is kept separate from arcade.</li>
-        <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A78BFA">MULTIPLAYER</span> <span class="desk-only">MULTIPLAYER</span><span class="mob-only">VERSUS</span> is a 90 second duel on the same arena and the same drones, so the higher score wins. Play a <b>FRIEND</b> with a 6 letter code (unrated) or <b>GLOBAL</b> against a player of your level. Global wins raise your <b>RATING</b> and losses lower it (everyone starts at 1000), and the matchmaker pairs you with players near your rating. Friend duels never change your rating. Your orb is <b>cyan</b>, your rival is a <b>violet</b> orb with a name tag. Scores: <b style="color:#0891B2">cyan = you</b>, <b style="color:#E11D48">red = rival</b>. Pass their score and it is a K.O. If nobody is online you race a ghost, a replay of a real run. Your rating shows on the leaderboard under your arcade best.</li>
+        <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:var(--pink)">MULTIPLAYER</span> <span class="desk-only">MULTIPLAYER</span><span class="mob-only">VERSUS</span> is a 90 second duel on the same arena and the same drones, so the higher score wins. Play a <b>FRIEND</b> with a 6 letter code (unrated) or <b>GLOBAL</b> against a player of your level. Global wins raise your <b>RATING</b> and losses lower it (everyone starts at 1000), and the matchmaker pairs you with players near your rating. Friend duels never change your rating. Your orb is <b>cyan</b>, your rival is a <b>violet</b> orb with a name tag. Scores: <b style="color:#0891B2">cyan = you</b>, <b style="color:#E11D48">red = rival</b>. Pass their score and it is a K.O. If nobody is online you race a ghost, a replay of a real run. Your rating shows on the leaderboard under your arcade best.</li>
         <li><span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A78BFA">OUTER</span> <span class="nb-pill" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink);background:#A3E635">INNER</span> You have 2 shield rings. The violet outer ring breaks first, then the lime inner ring. A hit with no ring left ends the run. Both rings come back at every new wave.</li>
         <li><span class="nb-pill c-orange" style="padding:0 6px;border-width:2px;box-shadow:2px 2px 0 var(--ink)">GHOST</span> Fills from greens, grazes and broken drones. It cannot refill while it is running. <span class="desk-only">Press E or wheel click when full.</span><span class="mob-only">Tap GHOST when full.</span></li>
         <li><span class="desk-only">Move with mouse, WASD or arrows. P to pause.</span><span class="mob-only">Move with the stick. Use the button under it to switch to arrows.</span></li>
@@ -2373,11 +2374,28 @@
       /* =========================================================================
        * 6. ARENA SIZING
        * ========================================================================= */
+      // Multiplayer: both players play on the SAME 800x450 field. Instead of letterboxing that field inside a
+      // bigger frame (black bars), the arena frame itself is resized to exactly 16:9 and centred, so the field
+      // fills it edge to edge on a laptop, a phone (either way up) and a tablet alike.
+      function fitMpFrame(on) {
+        const fr = UI.monitorFrame, st = fr.style;
+        st.width = st.height = st.flex = st.margin = '';
+        if (!on) return;
+        const r0 = fr.getBoundingClientRect();                       // natural size with the inline overrides removed
+        const bx = fr.offsetWidth - fr.clientWidth, by = fr.offsetHeight - fr.clientHeight;   // bezel border
+        const iw = Math.max(192, Math.floor(Math.min(r0.width - bx, (r0.height - by) * MP_W / MP_H)));
+        const ih = Math.round(iw * MP_H / MP_W);                         // the holder ends up 16:9 to within a fraction of a pixel
+        st.flex = '0 0 auto';
+        st.width = (iw + bx) + 'px';
+        st.height = (ih + by) + 'px';
+        st.margin = 'auto';
+      }
+
       function resizeCanvas() {
         const holder = canvas.parentElement;
         dpr = Math.min(window.devicePixelRatio || 1, 2);
         if (MPX.fixed) {
-          // Multiplayer: both players play on the SAME 800x450 field, scaled to fit (letterboxed)
+          fitMpFrame(true);
           const hw = Math.max(200, Math.floor(holder.clientWidth));
           const hh = Math.max(140, Math.floor(holder.clientHeight));
           arenaW = MP_W;
@@ -2389,6 +2407,7 @@
           MPX.oy = (hh - MP_H * MPX.s) / 2;
           ctx.setTransform(dpr * MPX.s, 0, 0, dpr * MPX.s, dpr * MPX.ox, dpr * MPX.oy);
         } else {
+          if (UI.monitorFrame.style.width) fitMpFrame(false);
           arenaW = Math.max(200, Math.floor(holder.clientWidth));
           arenaH = Math.max(140, Math.floor(holder.clientHeight));
           canvas.width = arenaW * dpr;
@@ -3945,7 +3964,7 @@
         },
         getState: () => ({
           x: Player.x, y: Player.y, score: Game.score, shields: Game.shields, wave: Game.wave,
-          dead: MPX.dead, dash: Player.dashT > 0, surge: MPX.clockT >= MP_SURGE, clockT: MPX.clockT
+          dead: MPX.dead, dash: Player.dashT > 0, gd: Game.overdriveTimer > 0, surge: MPX.clockT >= MP_SURGE, clockT: MPX.clockT
         }),
         // result is known: stop the loop and show the last frame
         finish: () => {
