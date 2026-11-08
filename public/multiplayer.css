@@ -60,8 +60,8 @@
 @keyframes mpVsIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes mpVsOut { to { opacity: 0; transform: scale(1.06); } }
 
-.mp-smoke { position: absolute; inset: -20%; pointer-events: none; filter: blur(38px); }
-.mp-smoke i { position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%; background: radial-gradient(circle, var(--glow) 0%, rgba(120,130,150,.18) 40%, transparent 70%); opacity: 0; animation: mpSmoke 5s ease-in-out infinite; }
+.mp-smoke { position: absolute; inset: -20%; pointer-events: none; }
+.mp-smoke i { position: absolute; width: 60vmax; height: 60vmax; border-radius: 50%; background: radial-gradient(circle, var(--glow) 0%, rgba(120,130,150,.18) 40%, transparent 70%); opacity: 0; animation: mpSmoke 5s ease-in-out infinite; will-change: transform, opacity; backface-visibility: hidden; }
 .mp-smoke i:nth-child(1) { left: -10%; top: 10%; animation-delay: 0s; }
 .mp-smoke i:nth-child(2) { right: -12%; top: -5%; animation-delay: .8s; animation-duration: 6s; background: radial-gradient(circle, rgba(251,113,133,.3), rgba(120,130,150,.16) 45%, transparent 70%); }
 .mp-smoke i:nth-child(3) { left: 20%; bottom: -25%; animation-delay: 1.4s; animation-duration: 7s; }
