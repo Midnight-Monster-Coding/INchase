@@ -1079,6 +1079,9 @@ function markGone(M) {
   if (bridge.orbPending() > 0) bridge.orbCommit();           // guest: no verdict will ever come, the claims stand
   if (!R.dead) { R.dead = true; R.deadScore = R.score; R.deadAt = Math.max(0, (performance.now() - M.startPerf) / 1000); }
 }
+// true  = the match ends the moment either player dies; the scores at that moment decide it.
+// false = old rule: the survivor keeps playing until it passes the dead player's score or the clock runs out.
+const END_ON_DEATH = true;
 function evaluate(M) {
   if (Z.match !== M || M.phase !== 'run') return;
   const R = M.rival;
@@ -1091,6 +1094,7 @@ function evaluate(M) {
     if (R.fin && R.fin.ko) why = 'rival-ko';
     else if (R.dead && M.me.dead) why = 'both';
     else if (R.dead && !M.me.dead && mine > R.deadScore) why = 'ko';
+    else if (END_ON_DEATH && (M.me.dead || (R.dead && !R.gone))) why = 'death';   // a rival that merely disconnected (gone) does not end it: the old rule still applies
     else if (M.me.timeUp) why = 'time';
     else if (M.me.dead && (st.clockT >= MP.MATCH_SEC || R.fin)) why = 'time';
     if (why && !holdForClaims(M)) finishMe(M, why);
