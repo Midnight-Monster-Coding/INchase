@@ -28,7 +28,7 @@ import {
   collection, query, where, limit, onSnapshot
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-firestore.js";
 import { firebaseConfig } from "./firebase-config.js";
-import { ICE_WORKER_URL, ICE_STUN_FALLBACK, FRIEND_POLICY, GLOBAL_POLICY } from "./mp-config.js";
+import { ICE_WORKER_URL, ICE_STUN_FALLBACK, FRIEND_POLICY, GLOBAL_POLICY, SCORE_WORKER_URL } from "./mp-config.js";
 import { Peer } from "./mp-net.js";
 import {
   MP, makeCode, normalizeCode, isValidCode, prettyCode, bandOf, ratingBand, bandsToScan, slotId, homeShard, shardsToProbe, pickShards,
@@ -851,6 +851,7 @@ function onCtl(M, m) {
       if (startPerf - now < 3600) startPerf = now + 3600;
       const sr = m.sr || {};
       M.series = { me: Math.round(num(sr.opp, 0, 999, 0)), opp: Math.round(num(sr.me, 0, 999, 0)) };
+      M.mid = String(m.mid || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
       beginRound(M, seed, startPerf);
       break;
     }
@@ -905,7 +906,9 @@ async function runSync(M) {
 function hostStart(M) {
   const seed = (cryptoRand() * 4294967296) >>> 0;
   const t0 = performance.now() + (MP.VS_SEC + 0.3 + MP.COUNTDOWN_SEC) * 1000;
-  M.peer.send({ k: 'start', seed, t0, sr: M.series });
+  // one match id per round: both players report the result under it, the score Worker checks the two reports agree
+  M.mid = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  M.peer.send({ k: 'start', seed, t0, sr: M.series, mid: M.mid });
   beginRound(M, seed, t0);
 }
 function startGhostMatch(g) {
@@ -1058,6 +1061,29 @@ function h2h(uid, outcome) {
   if (outcome) { if (outcome === 'win') r.w++; else if (outcome === 'lose') r.l++; else r.d++; all[uid] = r; const keys = Object.keys(all); if (keys.length > 60) delete all[keys[0]]; lsSet(H2H_KEY, JSON.stringify(all)); }
   return r;
 }
+async function reportMp(M, mine, theirs) {
+  if (!SCORE_WORKER_URL) return;
+  const mid = M.mid;
+  const body = { mid, opp: M.opp.uid, score: mine.score, oppScore: theirs.score, at: mine.at, da: M.me.dead ? M.me.deadAt : -1, kind: M.kind };
+  for (let i = 0; i < 12 && Z.match === M && M.mid === mid; i++) {   // the other player's report arrives within a few seconds
+    let r = {};
+    try {
+      const t = await auth.currentUser.getIdToken();
+      const res = await fetch(SCORE_WORKER_URL.replace(/\/$/, '') + '/mp/report', { method: 'POST', headers: { Authorization: 'Bearer ' + t, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      r = await res.json().catch(() => ({}));
+    } catch (e) { log('rating report failed', e); }
+    if (Z.match !== M || M.mid !== mid) return;
+    if (r.state === 'settled') {
+      if (r.stats) stats = Object.assign({}, DEFAULT_STATS, pickStats(r.stats));
+      M.result.rated = !!r.rated; M.result.delta = Number(r.delta) || 0; M.result.streak = stats.streak;
+      try { window.dispatchEvent(new CustomEvent('inchase:mprating', { detail: { rating: stats.rating, wins: stats.wins, losses: stats.losses, draws: stats.draws } })); } catch (e) { /* ignore */ }
+      if (M.phase === 'result') showResult(M);          // redraw the card with the confirmed rating
+      return;
+    }
+    if (r.state === 'disputed' || r.state === 'unrated') return;   // the reports disagree / not rated: no rating change
+    await sleep(1500);
+  }
+}
 function computeResult(M) {
   M.phase = 'result';
   clearInterval(M.tickId);
@@ -1070,24 +1096,11 @@ function computeResult(M) {
   if (outcome === 'win') M.series.me++; else if (outcome === 'lose') M.series.opp++;
   const ko = mine.ko ? 'me' : (R.fin && R.fin.ko ? 'them' : '');
   M.result = { outcome, mine, theirs, ko, left: R.gone && !R.fin, rated: false, delta: 0 };
-  // rating: real GLOBAL matches only. Friend duels (nobody can farm rating with a friend) and ghost / practice-bot races are unrated.
+  // RATING IS DECIDED BY THE SCORE SERVER. Real GLOBAL matches only (friend duels and ghost / practice races are unrated).
+  // Both players report the match under the same id; the Worker rates it only when the two reports agree, and does the Elo.
   if (M.kind === 'global' && identity()) {
-    const oppR = M.opp.rating || 1000;
-    let d = eloDelta(stats.rating, oppR, outcome === 'win' ? 1 : outcome === 'draw' ? 0.5 : 0, 24);
-    if (outcome === 'lose' && M.me.dead && M.me.deadAt < MP.EARLY_DEATH_SEC) d = Math.max(d, 0);   // dying in the first 15 s is free
-    M.result.rated = true; M.result.delta = d;
-    stats.rating = Math.round(num(stats.rating + d, 0, 4000, 1000));
-    stats.games++;
-    if (outcome === 'win') { stats.wins++; stats.streak++; stats.bestStreak = Math.max(stats.bestStreak, stats.streak); }
-    else if (outcome === 'lose') { stats.losses++; stats.streak = 0; } else stats.draws++;
-    stats.bestScore = Math.max(stats.bestScore, mine.score);
-    M.result.streak = stats.streak;
-    const id = identity();
-    setDoc(doc(db, 'mpstats', id.uid), Object.assign(pick(stats), { updatedAt: serverTimestamp() }), { merge: true }).catch((e) => log('stats save failed', e));
-    // show the new rating on the leaderboard (under the arcade best) and in the profile tab
-    updateDoc(doc(db, 'leaderboard', id.uid), { mpRating: stats.rating }).catch((e) => log('leaderboard rating save failed', e));
-    try { window.dispatchEvent(new CustomEvent('inchase:mprating', { detail: { rating: stats.rating, wins: stats.wins, losses: stats.losses, draws: stats.draws } })); } catch (e) { /* ignore */ }
-    if (mine.score > 0 && cryptoRand() < 0.4) uploadGhost(M, id);
+    if (M.mid && M.opp.uid) reportMp(M, mine, theirs);
+    if (mine.score > 0 && cryptoRand() < 0.4) uploadGhost(M, identity());
   }
   if (M.kind === 'friend' && M.opp.uid) M.result.h2h = h2h(M.opp.uid, outcome);
   if (outcome === 'win') (ko === 'me' ? sfx.ko : sfx.win)(); else if (outcome === 'lose') sfx.lose(); else sfx.pop();

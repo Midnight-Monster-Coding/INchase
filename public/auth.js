@@ -38,6 +38,7 @@ import {
   initializeAppCheck, ReCaptchaV3Provider
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app-check.js";
 import * as fbCfg from "./firebase-config.js";
+import { SCORE_WORKER_URL } from "./mp-config.js";
 const firebaseConfig = fbCfg.firebaseConfig;
 
 /* ---------------------------------------------------------------------------
@@ -413,7 +414,7 @@ async function pushNow() {
   const d = App.getData();
   try {
     await setDoc(doc(db, 'users', currentUser.uid), {
-      best: cleanBest(d.best), total: Math.max(0, Math.floor(Number(d.total)) || 0), runs: cleanRuns(d.runs), light: !!d.light, ctrl: (d.ctrl === 'stick' || d.ctrl === 'arrows') ? d.ctrl : null,
+      total: Math.max(0, Math.floor(Number(d.total)) || 0), runs: cleanRuns(d.runs), light: !!d.light, ctrl: (d.ctrl === 'stick' || d.ctrl === 'arrows') ? d.ctrl : null,
       updatedAt: serverTimestamp()
     }, { merge: true });
     log('cloud save ok');
@@ -594,13 +595,13 @@ $('nameSaveBtn').addEventListener('click', async () => {
       tx.set(nameRef, { uid: user.uid, name, createdAt: serverTimestamp() });
       tx.set(userRef, {
         username: name, usernameLower: lower, photoURL: safePhoto(user.photoURL),
-        best: seed.best, total: seed.total, runs: seed.runs,
+        best: 0, total: 0, runs: [],             // a new account starts at zero: a guest's local score can not be verified
         light: local.light, ctrl: local.ctrl,
         createdAt: serverTimestamp(), updatedAt: serverTimestamp()
       }, { merge: true });
     });
     App.setUid(user.uid);
-    App.setData({ best: seed.best, total: seed.total, runs: seed.runs, light: local.light, ctrl: local.ctrl });
+    App.setData({ best: 0, total: 0, runs: [], light: local.light, ctrl: local.ctrl });
     finishLogin(user, name, safePhoto(user.photoURL), false);
     toast('WELCOME, #' + name);
   } catch (err) {
@@ -685,20 +686,17 @@ function mpFor(uid, docValue) {
 async function pushBoard(force) {
   const user = currentUser;
   if (!user || !profile || profile.uid !== user.uid) return false;
-  const best = boardBest();
-  const sig = boardSig(best);
+  const sig = boardSig(0);                 // the score is server-owned: only name / photo changes are worth a write
   if (!force && sig === lastBoardSig) return false;
   try {
     await setDoc(doc(db, 'leaderboard', user.uid), {
       username: profile.username,
       usernameLower: profile.username.toLowerCase(),
       photoURL: safePhoto(profile.photoURL),
-      best,
-      ...mpField(),
       updatedAt: serverTimestamp()
-    }, { merge: true });   // merge: a save that does not know the rating (yet) must never erase it
+    }, { merge: true });   // best and mpRating belong to the score Worker; rules refuse them from the browser
     lastBoardSig = sig;
-    log('leaderboard entry saved', best);
+    log('leaderboard entry saved');
     return true;
   } catch (e) {
     console.warn('[auth] leaderboard save failed', e);
@@ -1211,15 +1209,12 @@ async function applyPhoto(dataUrl) {
   if (!user || !profile || profile.uid !== user.uid) throw new Error('nouser');
   const custom = !!dataUrl;
   const photo = custom ? dataUrl : safePhoto(user.photoURL);
-  const best = boardBest();
   const batch = writeBatch(db);
   batch.set(doc(db, 'users', user.uid), { photoURL: photo, customPhoto: custom, updatedAt: serverTimestamp() }, { merge: true });
   batch.set(doc(db, 'leaderboard', user.uid), {
     username: profile.username,
     usernameLower: profile.username.toLowerCase(),
     photoURL: photo,
-    best,
-    ...mpField(),
     updatedAt: serverTimestamp()
   }, { merge: true });
   await batch.commit();
@@ -1342,18 +1337,14 @@ function submitDaily() {
         score = Number((snap.data() || {}).score) || 0;        // already posted (earlier try or another device)
       } else {
         score = Math.max(0, Math.floor(Number(rec.score) || 0));
-        const photo = safePhoto(profile.photoURL, 600);
-        await setDoc(ref, {
-          username: profile.username,
-          usernameLower: profile.username.toLowerCase(),
-          photoURL: photo,
-          score,
-          wave: Math.max(1, Math.floor(Number(rec.wave) || 1)),
-          grid: String(rec.grid || '').replace(/[^GYR]/g, '').slice(0, 60),
-          day,
-          createdAt: serverTimestamp(),
-          expireAt: Timestamp.fromMillis((day + 3) * 86400000)   // the TTL policy deletes the document after this
-        });
+        // SERVER AUTHORITY: the score Worker checks the run and writes the daily entry. The browser can not.
+        const res = await runFinish(score, rec.wave, rec.grid, 'daily');
+        const st = res && res.data && res.data.status;
+        if (st !== 'accepted' && st !== 'exists' && st !== 'held') {
+          const e = new Error('daily-' + (st || (res ? 'http-' + res.status : 'no-run')));
+          e.code = e.message;
+          throw e;
+        }
       }
       App.markDailySubmitted();
       Dly.state = 'ranked';
@@ -1549,9 +1540,40 @@ window.addEventListener('keydown', (e) => { if (e.code === 'Escape' && isOpen('d
 log('auth.js ready');
 
 // What the game receives in the handshake (hoisted, so it exists when the handshake runs at the top of the file)
+/* ---- SERVER AUTHORITY -------------------------------------------------------------------------------------------
+   The browser can no longer write a score. It asks the score Worker for a signed run token when a run starts and sends
+   its result when the run ends; the Worker checks it and writes best / daily / rating. (firestore.rules deny the rest.) */
+const RUN_KEY = 'inchase_run_v1';
+async function scoreApi(path, body) {
+  if (!SCORE_WORKER_URL || !currentUser) return { status: 0, data: {} };
+  try {
+    const t = await currentUser.getIdToken();
+    const r = await fetch(SCORE_WORKER_URL.replace(/\/$/, '') + path, {
+      method: 'POST', headers: { Authorization: 'Bearer ' + t, 'content-type': 'application/json' }, body: JSON.stringify(body)
+    });
+    return { status: r.status, data: await r.json().catch(() => ({})) };
+  } catch (e) { return { status: 0, data: {} }; }
+}
+async function runStart(mode) {
+  const r = await scoreApi('/run/start', { mode });
+  if (r.status === 200 && r.data && r.data.token && currentUser) lsSet(RUN_KEY, JSON.stringify({ token: r.data.token, mode, uid: currentUser.uid }));
+  else lsDel(RUN_KEY);                     // never finish a new run with an old run's token
+  return r;                                 // 409 = the Daily attempt is already used
+}
+async function runFinish(score, wave, grid, mode) {
+  let saved = null;
+  try { saved = JSON.parse(lsGet(RUN_KEY) || 'null'); } catch (e) { saved = null; }
+  if (!saved || !saved.token || !currentUser || saved.uid !== currentUser.uid || (mode && saved.mode !== mode)) return null;
+  const r = await scoreApi('/run/finish', { token: saved.token, score, wave, grid: grid || '' });
+  if (r.status !== 0 && r.status < 500) lsDel(RUN_KEY);   // used up (or refused for good). A network error / 5xx keeps it so it can be retried
+  return r;
+}
+
 function authApiForGame() {
   return {
     schedulePush,
+    runStart,
+    runFinish: (score, wave) => runFinish(score, wave, '', 'arcade'),
     isLoggedIn: () => dailyOk(),      // arrow wrappers: dailyOk / authBusy are consts defined later in this file
     status: dailyStatus,
     submit: submitDaily,

@@ -1,0 +1,9 @@
+name = "inchase-score"
+main = "score-worker.js"
+compatibility_date = "2025-01-01"
+
+# Non-secret settings. Secrets (SA_PRIVATE_KEY, SA_EMAIL, RUN_SECRET, ADMIN_KEY) are set with `wrangler secret put`, never written here.
+[vars]
+FIREBASE_PROJECT_ID = "inchase"
+ALLOWED_ORIGINS = "https://inchase.web.app,https://inchase.firebaseapp.com"
+HOLD_ABOVE = "30000"

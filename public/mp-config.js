@@ -10,6 +10,9 @@
  * ========================================================================== */
 export const ICE_WORKER_URL = 'https://inchase.jhonw3171.workers.dev/';
 
+// The SCORE Worker (worker/score-worker.js): the only thing allowed to write scores and ratings. Deploy it, then check this URL.
+export const SCORE_WORKER_URL = 'https://inchase-score.jhonw3171.workers.dev';
+
 export const ICE_STUN_FALLBACK = [
   'stun:stun.l.google.com:19302',
   'stun:stun1.l.google.com:19302',

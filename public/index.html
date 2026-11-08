@@ -3639,6 +3639,19 @@
           showToast('DAILY HAS ONE ATTEMPT. TRY ARCADE!');
           return;
         }
+        // SERVER AUTHORITY: the score server issues the signed run token (and, for Daily, spends the one attempt).
+        if (Game.mode === 'daily' && authApi && authApi.runStart && !Game.dailyTokenOk) {
+          if (Game.dailyTokenBusy) return;
+          Game.dailyTokenBusy = true;
+          authApi.runStart('daily').then((r) => {
+            Game.dailyTokenBusy = false;
+            if (r.status === 200) { Game.dailyTokenOk = true; startNewRun(); Game.dailyTokenOk = false; }
+            else if (r.status === 409) showToast('DAILY HAS ONE ATTEMPT. TRY ARCADE!');
+            else showToast('CAN NOT REACH THE SCORE SERVER. TRY AGAIN');
+          });
+          return;
+        }
+        if (Game.mode === 'arcade' && authApi && authApi.runStart && authApi.isLoggedIn && authApi.isLoggedIn()) authApi.runStart('arcade');   // fire and forget
         if (Game.rafId) {
           cancelAnimationFrame(Game.rafId);
           Game.rafId = null;
@@ -3806,6 +3819,22 @@
           bestShown = store.best;
         }
         saveStore();
+        // SERVER AUTHORITY (arcade): the score server decides what reaches the leaderboard; the local best follows its answer.
+        if (Game.mode === 'arcade' && authApi && authApi.runFinish && authApi.isLoggedIn && authApi.isLoggedIn()) {
+          const sentScore = Game.score, bestBefore = prevBest;
+          authApi.runFinish(Game.score, Game.wave).then((r) => {
+            const d = r && r.data;
+            if (!d) return;
+            if (d.status === 'accepted' && Number.isFinite(d.best) && d.best !== store.best) {
+              store.best = d.best; saveStore(false); UI.statBestScore.textContent = d.best.toLocaleString();
+            } else if (d.status === 'held') {
+              showToast('SCORE UNDER REVIEW');
+            } else if (d.status === 'rejected') {
+              if (store.best === sentScore) { store.best = bestBefore; saveStore(false); UI.statBestScore.textContent = bestBefore.toLocaleString(); UI.newBestTag.classList.add('hidden'); }
+              showToast('SCORE NOT ACCEPTED');
+            }
+          });
+        }
         renderMatchHistory();
         UI.statFinalScore.textContent = Game.score.toLocaleString();
         UI.statBestScore.textContent = bestShown.toLocaleString();
