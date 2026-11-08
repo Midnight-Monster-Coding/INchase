@@ -747,6 +747,7 @@ async function acceptInvite(inv) {
 function resetRound(M) {
   if (M.orb) { M.orb.dispose(); M.orb = null; }
   M.rivalDeadMsg = false; M.pendSince = 0;
+  M.pendingClaims = [];      // host: guest claims that arrived before this side's OrbReferee exists (flushed in beginEngine)
   M.rival = { interp: new Interp(), score: 0, dead: false, deadScore: 0, deadAt: 0, fin: null, lastSeen: 0, seen: false, gone: false, shields: 2, dash: false, scoreAt: 0, name: (M.opp && M.opp.name) || '?' };
   M.me = { dead: false, deadScore: 0, deadAt: 0, scoreAt: 0, lastScore: 0, fin: null, finAt: 0, timeUp: false };
   M.rec = { pos: [], scores: [] };
@@ -757,7 +758,8 @@ function newMatch(kind, role, expectUid) {
     id: ++Z.matchSeq, kind, role, expectUid, peer: null, phase: 'connect', opp: { name: '?', uid: '', photo: '', rating: 0, band: 0 },
     ghost: null, series: { me: 0, opp: 0 }, rematch: { me: false, opp: false }, skew: 0, offset: 0, route: '',
     gotHello: false, timers: [], tickId: 0, helloTimer: 0, peerClosed: false, seed: 0, startPerf: 0,
-    pendingSeed: 0, startAcked: false
+    pendingSeed: 0, startAcked: false,
+    rtt: 0, rttId: 0, rttPing: null, rttN: 0, seq2: 0     // HOST only: round trip in ms, kept fresh during the match (guest never reads it)
   };
   resetRound(M);
   Z.match = M;
@@ -773,7 +775,7 @@ function makePeer(M, policy) {
 function dropMatch(M) {
   if (!M) return;
   M.timers.forEach(clearTimeout); M.timers = [];
-  clearInterval(M.tickId); clearTimeout(M.helloTimer);
+  clearInterval(M.tickId); clearInterval(M.rttId); clearTimeout(M.helloTimer);
   if (M.orb) { M.orb.dispose(); M.orb = null; }
   if (M.peer) { try { M.peer.close(); } catch (e) { /* ignore */ } }
   if (Z.match === M) Z.match = null;
@@ -836,7 +838,14 @@ function onCtl(M, m) {
       break;
     }
     case 'ping': M.peer.send({ k: 'pong', id: m.id, th: performance.now() }); break;
-    case 'pong': if (M.pongs && M.pongs.has(m.id)) { M.pongs.get(m.id)(num(m.th, -1e12, 1e12, null)); } break;
+    case 'pong':
+      if (M.pongs && M.pongs.has(m.id)) { M.pongs.get(m.id)(num(m.th, -1e12, 1e12, null)); }
+      else if (M.role === 'host' && M.rttPing && m.id === M.rttPing.id) {      // in-match RTT sample (see startRttKeepalive)
+        const s = performance.now() - M.rttPing.t0;
+        M.rttPing = null;
+        if (s >= 0 && s <= 5000) { M.rtt = M.rttN++ ? M.rtt * 0.6 + s * 0.4 : Math.max(M.rtt, s); }
+      }
+      break;
     case 'sync':
       if (M.role !== 'host' || !M.gotHello) return;
       M.skew = num(m.offset, -1e10, 1e10, 0);        // guest clock + offset = host clock
@@ -849,7 +858,10 @@ function onCtl(M, m) {
       let startPerf = Number(m.t0) - M.offset;       // host clock -> my clock
       const now = performance.now();
       if (!Number.isFinite(startPerf) || startPerf - now > 20000) startPerf = now + 7900;
-      if (startPerf - now < 3600) startPerf = now + 3600;
+      // Floor = the full VS intro + the 3-2-1 countdown. A shorter lead makes beginRound() cut the VS screen
+      // short (beginEngine/hideVS fire at lead-3500 / lead-3000). The clamp is safe: startAck tells the host.
+      const minLead = (MP.VS_SEC + MP.COUNTDOWN_SEC) * 1000;
+      if (startPerf - now < minLead) startPerf = now + minLead;
       // Tell the host exactly which startPerf I'm using (translated back into ITS clock), even when
       // the clamp above fired, so both devices run the shared drone field from the same time origin.
       M.peer.send({ k: 'startAck', t: startPerf + M.offset });
@@ -868,7 +880,11 @@ function onCtl(M, m) {
       beginRound(M, M.pendingSeed >>> 0, t);
       break;
     }
-    case 'claim': if (M.orb && M.role === 'host') M.orb.guestClaim(m); break;      // guest touched the orb (host settles it)
+    case 'claim':                                  // guest touched the orb (host settles it)
+      if (M.role !== 'host') break;
+      if (M.orb) M.orb.guestClaim(m);
+      else if (M.phase === 'vs' && M.pendingClaims.length < 32) M.pendingClaims.push(m);   // guest engine started first: keep it, don't drop it
+      break;
     case 'orb': if (M.orb && M.role === 'guest') M.orb.hostVerdict(m); break;     // host: who got orb n, and when
     case 'dead':
       M.rivalDeadMsg = true;                         // ctl is ordered: every claim the rival made before dying has already arrived
@@ -944,7 +960,7 @@ function startGhostMatch(g) {
 function beginRound(M, seed, startPerf) {
   if (Z.match !== M) return;
   M.timers.forEach(clearTimeout); M.timers = [];
-  clearInterval(M.tickId);
+  clearInterval(M.tickId); clearInterval(M.rttId);
   const keepName = M.rival.name;
   resetRound(M);
   M.rival.name = keepName;
@@ -964,7 +980,7 @@ function beginEngine(M) {
     send: (m) => { if (M.peer) M.peer.send(m); },
     onVerdict: (n, mine, t) => onOrbVerdict(M, n, mine, t),
     clock: () => (performance.now() - M.startPerf) / 1000,
-    rtt: () => M.rtt || 200,
+    rtt: M.role === 'host' ? () => M.rtt || 200 : undefined,   // only the host's pump() reads it; the guest never measures an RTT
     solo: () => !!M.ghost || !M.peer || M.peerClosed || M.rival.gone,   // nobody to wait for: ghost / practice race or the rival left
     rivalDead: () => !!M.rivalDeadMsg
   });
@@ -976,8 +992,27 @@ function beginEngine(M) {
     host: M.role === 'host'      // the host's orb is hunted by the even-numbered drones, the guest's by the odd ones
   });
   M.phase = 'run';
+  if (M.pendingClaims.length) {                    // host: claims that beat our engine start (guestClaim validates every field)
+    const q = M.pendingClaims; M.pendingClaims = [];
+    q.forEach((m) => M.orb.guestClaim(m));
+  }
   showHud(M);
   M.tickId = setInterval(() => tick(M), 1000 / MP.SNAP_HZ);
+  startRttKeepalive(M);
+}
+// HOST: re-measure the round trip during the match so the orb tie-break wait (orbWaitMs) follows the real link.
+// Reuses the existing ping/pong messages (the guest already answers 'ping'). skew is NOT touched: clocks do not drift
+// in 90 s and changing it mid-match would make the rival jump on screen.
+const RTT_REFRESH_MS = 15000;
+function startRttKeepalive(M) {
+  clearInterval(M.rttId);
+  if (M.role !== 'host' || M.ghost || !M.peer) return;
+  M.rttId = setInterval(() => {
+    if (Z.match !== M || M.phase !== 'run' || !M.peer || M.peerClosed) { clearInterval(M.rttId); return; }
+    const id = 'r' + (++M.seq2);
+    M.rttPing = { id, t0: performance.now() };
+    M.peer.send({ k: 'ping', id });
+  }, RTT_REFRESH_MS);
 }
 
 function tick(M) {

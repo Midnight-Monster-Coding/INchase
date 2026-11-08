@@ -14,14 +14,14 @@ import { hasTurn } from './mp-core.js';
 /* SECURITY: the SDP comes from the other player through Firestore, so it is untrusted text. Only a small, plain, single
    data-channel description with a DTLS fingerprint is accepted; anything else is refused before the browser parses it. */
 export function sanitizeSdp(s) {
-  if (typeof s !== 'string' || s.length < 50 || s.length > 12000) return null;
+  if (typeof s !== 'string' || s.length < 50 || s.length > 24000) return null;
   if (s.indexOf('v=0') !== 0) return null;
   if (/[^\x09\x0a\x0d\x20-\x7e]/.test(s)) return null;                 // printable ASCII + line breaks only
   const lines = s.split(/\r?\n/);
   if (lines.length > 200) return null;
   let cand = 0, media = 0;
   for (const l of lines) { if (l.indexOf('a=candidate:') === 0) cand++; else if (l.indexOf('m=') === 0) media++; }
-  if (media !== 1 || cand > 40) return null;                                // one data-channel section, a sane number of routes
+  if (media !== 1 || cand > 80) return null;                                // one data-channel section; 80 still covers VPN + Wi-Fi + cellular + WSL/Docker adapters
   if (!/^m=application /m.test(s) || !/^a=fingerprint:/m.test(s)) return null;
   return s;
 }
