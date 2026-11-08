@@ -11,3 +11,8 @@ export const firebaseConfig = {
   appId: "1:899688378990:web:0e9e0f583cf38686ef6c7f",
   measurementId: "G-V9ETESWC9E"
 };
+
+// Firebase App Check (anti-abuse). Create a reCAPTCHA v3 key for inchase.web.app, register it in
+// Firebase console > App Check, paste the SITE key here, then enforce it for Firestore / Realtime Database / Auth.
+// Leave it empty to keep App Check off. (A site key is public by design; the secret key never goes in this file.)
+export const appCheckSiteKey = '';

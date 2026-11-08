@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "@firebase/rules-unit-testing": "^5.0.2",
     "firebase": "^13.0.0"
   }
 }

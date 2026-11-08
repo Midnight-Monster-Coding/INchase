@@ -5,7 +5,7 @@
    - Everything else (Firebase auth incl. /__/auth/*, Firestore, Google APIs, POST requests) is never touched
    Bump CACHE_VERSION to force every device to drop old caches. */
 
-const CACHE_VERSION = 'v11';
+const CACHE_VERSION = 'v12';
 const CACHE = 'inchase-' + CACHE_VERSION;
 
 const PRECACHE = [
@@ -20,7 +20,9 @@ const PRECACHE = [
   '/multiplayer.css',
   '/mp-core.js',
   '/mp-net.js',
-  '/mp-config.js'
+  '/mp-config.js',
+  '/auth.js',
+  '/firebase-config.js'
 ];
 
 const CDN_HOSTS = [
@@ -28,6 +30,8 @@ const CDN_HOSTS = [
   'fonts.googleapis.com',
   'fonts.gstatic.com'
 ];
+// The pinned Firebase SDK files (auth.js imports them). Without this the whole login module fails to load offline.
+const isFirebaseSdk = (u) => u.hostname === 'www.gstatic.com' && u.pathname.startsWith('/firebasejs/');
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -53,10 +57,10 @@ function staleWhileRevalidate(request) {
     cache.match(request).then((cached) => {
       const network = fetch(request)
         .then((res) => {
-          if (res && (res.ok || res.type === 'opaque')) cache.put(request, res.clone());
+          if (res && ((res.ok && res.status === 200) || res.type === 'opaque')) cache.put(request, res.clone()).catch(() => {});
           return res;
         })
-        .catch(() => cached);
+        .catch(() => cached || Response.error());
       return cached || network;
     })
   );
@@ -80,7 +84,8 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req, { cache: 'no-cache' })   // ask the server every time: Firebase Hosting's default 1h HTTP cache must not serve an old page
         .then((res) => {
-          if (sameOrigin && res && res.ok && res.type === 'basic') { const copy = res.clone(); caches.open(CACHE).then((c) => c.put('/', copy)); }
+          // only the real home page may replace the cached home page (any other path used to overwrite it)
+          if (sameOrigin && url.pathname === '/' && res && res.ok && res.type === 'basic') { const copy = res.clone(); caches.open(CACHE).then((c) => c.put('/', copy)); }
           return res;
         })
         .catch(() => caches.match('/').then((r) => r || caches.match(req)))
@@ -96,15 +101,15 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(req, { cache: 'no-cache' })
         .then((res) => {
-          if (res && res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
+          if (res && res.ok && res.status === 200) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(req, copy)); }
           return res;
         })
-        .catch(() => caches.match(req))
+        .catch(() => caches.match(req).then((r) => r || Response.error()))
     );
     return;
   }
 
-  if (sameOrigin || CDN_HOSTS.includes(url.hostname)) {
+  if (sameOrigin || CDN_HOSTS.includes(url.hostname) || isFirebaseSdk(url)) {
     event.respondWith(staleWhileRevalidate(req));
   }
   // anything else (Firebase, Google APIs) goes straight to the network

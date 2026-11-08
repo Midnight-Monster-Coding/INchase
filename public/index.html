@@ -7,6 +7,7 @@
   <title>INchase — Developed by IAB</title>
   <meta name="description" content="INchase is a free arcade survival game for your browser, developed by IAB. Dash through waves of drones, chain combos up to x8 and race the global leaderboard. Also by IAB: DarkBeats, Shutter Soul and BeatSense." />
   <meta name="author" content="IAB" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
   <meta name="theme-color" content="#08090C" />
   <link rel="canonical" href="https://inchase.web.app/" />
   <link rel="manifest" href="/manifest.json" />
@@ -941,14 +942,14 @@
       <ul class="creations-list">
         <li>
           <a id="dlMicrosoft" class="creation-row retro-key c-white" href="https://apps.microsoft.com/detail/9N5ZWLFPG2RZ?hl=en&amp;gl=IN&amp;ocid=pdpshare" target="_blank" rel="noopener noreferrer" aria-label="Get INchase on the Microsoft Store">
-            <img class="creation-logo" src="ms-store.png" alt="" width="52" height="52" decoding="async" draggable="false" style="object-fit:contain;padding:6px;background:#fff" onerror="this.style.display='none'" />
+            <img class="creation-logo" src="ms-store.png" alt="" width="52" height="52" decoding="async" draggable="false" style="object-fit:contain;padding:6px;background:#fff" data-hide-on-error />
             <span class="creation-name">MICROSOFT STORE</span>
             <span class="creation-go" aria-hidden="true">↗</span>
           </a>
         </li>
         <li>
           <a id="dlAndroid" class="creation-row retro-key c-white" href="https://github.com/Midnight-Monster-Coding/INchase/releases/latest/download/INchase.apk" download="INchase.apk" rel="noopener" aria-label="Download INchase for Android">
-            <img class="creation-logo" src="android.png" alt="" width="52" height="52" decoding="async" draggable="false" style="object-fit:contain;padding:6px;background:#fff" onerror="this.style.display='none'" />
+            <img class="creation-logo" src="android.png" alt="" width="52" height="52" decoding="async" draggable="false" style="object-fit:contain;padding:6px;background:#fff" data-hide-on-error />
             <span class="creation-name">DOWNLOAD IN ANDROID</span>
             <span class="creation-go" aria-hidden="true">↓</span>
           </a>
@@ -4795,6 +4796,13 @@
   <script>
     (function () {
       'use strict';
+      // Images that may be missing hide themselves. (Replaces two inline onerror="" attributes, so the Content-Security-Policy
+      // can forbid inline event handlers completely.)
+      document.querySelectorAll('img[data-hide-on-error]').forEach((img) => {
+        const hide = () => { img.style.display = 'none'; };
+        img.addEventListener('error', hide);
+        if (img.complete && img.naturalWidth === 0) hide();   // it may have failed before this script ran
+      });
       const modal = document.getElementById('downloadModal');
       const openBtn = document.getElementById('downloadBtn');
       const closeBtn = document.getElementById('downloadCloseBtn');

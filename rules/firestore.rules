@@ -1,0 +1,328 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Everything not listed below is denied by default (there is deliberately no catch-all rule).
+
+    // =====================================================================
+    // Helpers
+    // =====================================================================
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return request.auth != null && request.auth.uid == uid; }
+
+    // Display names: letters, digits, underscore, 3-16 chars (same as the username picker).
+    function validName(s) { return s is string && s.matches('^[A-Za-z0-9_]{3,16}$'); }
+
+    // A photo may be: empty, a Google profile picture, or a small data: image made by the game's own uploader.
+    // Blocks tracking pixels on third-party servers, javascript:/http: URLs and oversized junk.
+    function validPhoto(p, maxLen) {
+      return p is string && p.size() <= maxLen && (
+        p == ''
+        || p.matches('^https://[a-z0-9-]+[.]googleusercontent[.]com/[A-Za-z0-9_./=%~+-]*$')
+        || p.matches('^data:image/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$'));
+    }
+
+    // The caller's real username, read from their private profile (so nobody can post under another display name).
+    function myName() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.username; }
+
+    // Upper bound only (a phone with a wrong clock must still work). The TTL policy removes the document afterwards.
+    function expireOk(t, maxAhead) { return t is timestamp && t <= request.time + maxAhead; }
+
+    // =====================================================================
+    // Usernames: one document per name (doc id = lowercase name).
+    // A uid can only claim the name that its own users/{uid} document is created with in the SAME transaction,
+    // so one account can no longer hoard / squat many names.
+    // =====================================================================
+    match /usernames/{name} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+                    && name.matches('^[a-z0-9_]{3,16}$')
+                    && request.resource.data.keys().hasOnly(['uid', 'name', 'createdAt'])
+                    && request.resource.data.keys().hasAll(['uid', 'name', 'createdAt'])
+                    && request.resource.data.uid == request.auth.uid
+                    && validName(request.resource.data.name)
+                    && request.resource.data.name.lower() == name
+                    && request.resource.data.createdAt == request.time
+                    && getAfter(/databases/$(database)/documents/users/$(request.auth.uid)).data.usernameLower == name;
+      allow update, delete: if false;
+    }
+
+    // =====================================================================
+    // Private per-user profile + game history.
+    // Field checks apply only to the fields being written, so older documents with extra legacy fields keep saving.
+    // =====================================================================
+    function userFieldsOk(d, ch) {
+      return ch.hasOnly(['username', 'usernameLower', 'photoURL', 'customPhoto', 'best', 'total', 'runs', 'light', 'ctrl', 'createdAt', 'updatedAt'])
+          && (!ch.hasAny(['photoURL'])    || validPhoto(d.photoURL, 20000))
+          && (!ch.hasAny(['customPhoto']) || d.customPhoto is bool)
+          && (!ch.hasAny(['best'])        || (d.best is number && d.best >= 0 && d.best <= 1000000))
+          && (!ch.hasAny(['total'])       || (d.total is number && d.total >= 0 && d.total <= 100000000))
+          && (!ch.hasAny(['runs'])        || (d.runs is list && d.runs.size() <= 20))
+          && (!ch.hasAny(['light'])       || d.light is bool)
+          && (!ch.hasAny(['ctrl'])        || d.ctrl == null || d.ctrl in ['stick', 'arrows']);
+    }
+
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid)
+                    && validName(request.resource.data.username)
+                    && request.resource.data.usernameLower == request.resource.data.username.lower()
+                    && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower)).data.uid == request.auth.uid
+                    && userFieldsOk(request.resource.data, request.resource.data.keys().toSet());
+      // The username can never change after creation (it used to be editable, which allowed free-form display names).
+      allow update: if isOwner(uid)
+                    && request.resource.data.usernameLower == resource.data.usernameLower
+                    && request.resource.data.username == resource.data.username
+                    && userFieldsOk(request.resource.data, request.resource.data.diff(resource.data).affectedKeys());
+      allow delete: if false;
+    }
+
+    // =====================================================================
+    // Public leaderboard entry (one doc per player).
+    // mpRating is optional (multiplayer rating, shown under the arcade best).
+    // NOTE: `best` is reported by the browser. These rules bound it, they cannot prove it. See SECURITY.md (server-side
+    // score checking) for the only real fix.
+    // =====================================================================
+    match /leaderboard/{uid} {
+      allow read: if request.auth != null;
+
+      // Full score write (arcade best etc.)
+      allow create, update: if request.auth != null && request.auth.uid == uid
+                    && request.resource.data.keys().hasOnly(['username', 'usernameLower', 'photoURL', 'best', 'updatedAt', 'mpRating'])
+                    && request.resource.data.keys().hasAll(['username', 'usernameLower', 'photoURL', 'best', 'updatedAt'])
+                    && validName(request.resource.data.username)
+                    && request.resource.data.usernameLower is string
+                    && request.resource.data.usernameLower.matches('^[a-z0-9_]{3,16}$')
+                    && validPhoto(request.resource.data.photoURL, 20000)
+                    && request.resource.data.best is number
+                    && request.resource.data.best >= 0
+                    && request.resource.data.best <= 1000000
+                    && (!('mpRating' in request.resource.data)
+                        || (request.resource.data.mpRating is number
+                            && request.resource.data.mpRating >= 0
+                            && request.resource.data.mpRating <= 4000))
+                    && request.resource.data.updatedAt == request.time
+                    && get(/databases/$(database)/documents/users/$(uid)).data.username == request.resource.data.username
+                    && get(/databases/$(database)/documents/users/$(uid)).data.usernameLower == request.resource.data.usernameLower;
+
+      // Rating-only write: updateDoc(leaderboard/{uid}, { mpRating }). Changes nothing else.
+      allow update: if request.auth != null && request.auth.uid == uid
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mpRating'])
+                    && request.resource.data.mpRating is number
+                    && request.resource.data.mpRating >= 0
+                    && request.resource.data.mpRating <= 4000;
+
+      allow delete: if false;
+    }
+
+    // =====================================================================
+    // DAILY RUN ranks: daily/{dayNumber}/entries/{uid}  (one UTC day per path, so the board "resets" by itself)
+    // - Any signed-in player can read.
+    // - Create once, only for TODAY by the SERVER clock. No update, no delete.
+    // - The day check uses plain integer comparisons (no division / string() / float rounding).
+    // =====================================================================
+    match /daily/{day}/entries/{uid} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.auth.uid == uid
+                    && day.matches('^[0-9]{1,6}$')
+                    && request.time.toMillis() >= int(day) * 86400000
+                    && request.time.toMillis() < (int(day) + 1) * 86400000
+                    && request.resource.data.keys().hasOnly(['username', 'usernameLower', 'photoURL', 'score', 'wave', 'grid', 'day', 'createdAt', 'expireAt'])
+                    && request.resource.data.keys().hasAll(['username', 'usernameLower', 'photoURL', 'score', 'wave', 'grid', 'day', 'createdAt', 'expireAt'])
+                    && request.resource.data.day == int(day)
+                    && validName(request.resource.data.username)
+                    && request.resource.data.usernameLower is string
+                    && request.resource.data.usernameLower.matches('^[a-z0-9_]{3,16}$')
+                    && validPhoto(request.resource.data.photoURL, 600)
+                    && request.resource.data.score is number
+                    && request.resource.data.score >= 0
+                    && request.resource.data.score <= 1000000
+                    && request.resource.data.wave is number
+                    && request.resource.data.wave >= 1
+                    && request.resource.data.wave <= 300
+                    && request.resource.data.grid is string
+                    && request.resource.data.grid.size() <= 60
+                    && request.resource.data.grid.matches('^[GYR]*$')
+                    && request.resource.data.createdAt == request.time
+                    && expireOk(request.resource.data.expireAt, duration.value(4, 'd'))
+                    && get(/databases/$(database)/documents/users/$(uid)).data.username == request.resource.data.username
+                    && get(/databases/$(database)/documents/users/$(uid)).data.usernameLower == request.resource.data.usernameLower;
+      allow update, delete: if false;
+    }
+
+    // =====================================================================
+    // MULTIPLAYER (multiplayer.js). Signaling + matchmaking only: a few small docs per match.
+    // Turn on a Firestore TTL policy on the field `expireAt` for: mp_codes, mp_slots, mp_ghosts and the
+    // collection group `items`, so old tickets and invites delete themselves.
+    // Every name written here must equal the caller's real username (no impersonating another player).
+    // =====================================================================
+
+    // { mmShards, subShards }: written by you in the console only. Raise them as the player count grows.
+    match /mp_config/{id} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
+    // Friend code. Host creates it, then adds the WebRTC offer; the first guest adds the answer.
+    match /mp_codes/{code} {
+      allow get: if request.auth != null;
+      allow list: if false;
+      allow create: if request.auth != null
+                    && code.matches('^[A-HJ-NP-Z2-9]{6}$')
+                    && request.resource.data.keys().hasOnly(['host', 'name', 'state', 'ts', 'expireAt'])
+                    && request.resource.data.host == request.auth.uid
+                    && request.resource.data.name is string && request.resource.data.name.size() <= 20
+                    && request.resource.data.name == myName()
+                    && request.resource.data.state == 'open'
+                    && request.resource.data.ts == request.time
+                    && expireOk(request.resource.data.expireAt, duration.value(1, 'd'));
+      allow update: if request.auth != null && (
+                      // host attaches the offer
+                      (resource.data.host == request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['offer'])
+                        && request.resource.data.offer is string && request.resource.data.offer.size() <= 12000)
+                      ||
+                      // exactly one guest may answer, within 5 minutes, and only after the offer exists
+                      (resource.data.host != request.auth.uid
+                        && !('guest' in resource.data)
+                        && 'offer' in resource.data
+                        && resource.data.state == 'open'
+                        && resource.data.ts > request.time - duration.value(5, 'm')
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['guest', 'guestName', 'answer', 'state'])
+                        && request.resource.data.guest == request.auth.uid
+                        && request.resource.data.guestName is string && request.resource.data.guestName.size() <= 20
+                        && request.resource.data.guestName == myName()
+                        && request.resource.data.answer is string && request.resource.data.answer.size() <= 12000
+                        && request.resource.data.state == 'joined')
+                    );
+      allow delete: if request.auth != null && resource.data.host == request.auth.uid;
+    }
+
+    // Global matchmaking: ONE waiting ticket per (skill band, shard). id = b{band}s{shard}.
+    match /mp_slots/{slot} {
+      allow get: if request.auth != null;
+      allow list: if false;
+      allow create: if request.auth != null
+                    && slot.matches('^b[0-5]s[0-9]{1,2}$')
+                    && request.resource.data.keys().hasOnly(['uid', 'name', 'band', 'offer', 'ts', 'expireAt'])
+                    && request.resource.data.uid == request.auth.uid
+                    && request.resource.data.name is string && request.resource.data.name.size() <= 20
+                    && request.resource.data.name == myName()
+                    && request.resource.data.band is int && request.resource.data.band >= 0 && request.resource.data.band <= 5
+                    && request.resource.data.offer is string && request.resource.data.offer.size() <= 12000
+                    && request.resource.data.ts == request.time
+                    && expireOk(request.resource.data.expireAt, duration.value(1, 'd'));
+      allow update: if request.auth != null && (
+                      // become the waiter: the slot is mine, or the old ticket is dead (older than 14 s)
+                      ((resource.data.uid == request.auth.uid || resource.data.ts < request.time - duration.value(14, 's'))
+                        && request.resource.data.keys().hasOnly(['uid', 'name', 'band', 'offer', 'ts', 'expireAt'])
+                        && request.resource.data.uid == request.auth.uid
+                        && request.resource.data.name is string && request.resource.data.name.size() <= 20
+                        && request.resource.data.name == myName()
+                        && request.resource.data.band is int && request.resource.data.band >= 0 && request.resource.data.band <= 5
+                        && request.resource.data.offer is string && request.resource.data.offer.size() <= 12000
+                        && request.resource.data.ts == request.time
+                        && expireOk(request.resource.data.expireAt, duration.value(1, 'd')))
+                      ||
+                      // keep my ticket alive
+                      (resource.data.uid == request.auth.uid
+                        && !('claimedBy' in resource.data)
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ts'])
+                        && request.resource.data.ts == request.time)
+                      ||
+                      // claim somebody else's fresh, unclaimed ticket
+                      (resource.data.uid != request.auth.uid
+                        && !('claimedBy' in resource.data)
+                        && resource.data.ts > request.time - duration.value(14, 's')
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['claimedBy', 'claimerName', 'answer'])
+                        && request.resource.data.claimedBy == request.auth.uid
+                        && request.resource.data.claimerName is string && request.resource.data.claimerName.size() <= 20
+                        && request.resource.data.claimerName == myName()
+                        && request.resource.data.answer is string && request.resource.data.answer.size() <= 12000)
+                    );
+      allow delete: if request.auth != null && resource.data.uid == request.auth.uid;
+    }
+
+    // "X wants to play globally": mp_invites/{subscriberShard}/items/{senderUid}. One doc per sender, rewritten at most every 20 s.
+    match /mp_invites/{shard}/items/{uid} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+                    && shard.matches('^[0-9]{1,4}$')
+                    && request.resource.data.keys().hasOnly(['uid', 'name', 'band', 'slot', 'ts', 'expireAt'])
+                    && request.resource.data.uid == uid
+                    && request.resource.data.name is string && request.resource.data.name.size() <= 20
+                    && request.resource.data.name == myName()
+                    && request.resource.data.band is int && request.resource.data.band >= 0 && request.resource.data.band <= 5
+                    && request.resource.data.slot is string && request.resource.data.slot.matches('^b[0-5]s[0-9]{1,2}$')
+                    && request.resource.data.ts == request.time
+                    && expireOk(request.resource.data.expireAt, duration.value(1, 'd'))
+                    && (resource == null || resource.data.ts < request.time - duration.value(20, 's'));
+      allow delete: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Recorded runs used as the rival when nobody else is searching. Casual: bounded shape and size only.
+    // A slot can be overwritten at most every 30 s (stops one script from flooding / poisoning every ghost at once).
+    match /mp_ghosts/{g} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null
+                    && g.matches('^b[0-5]_[0-7]$')
+                    && request.resource.data.keys().hasOnly(['band', 'seed', 'score', 'deadAt', 'name', 'pos', 'sc', 'ts', 'expireAt'])
+                    && request.resource.data.band is int && request.resource.data.band >= 0 && request.resource.data.band <= 5
+                    && request.resource.data.seed is number && request.resource.data.seed >= 0 && request.resource.data.seed < 4294967296
+                    && request.resource.data.score is number && request.resource.data.score >= 0 && request.resource.data.score <= 1000000
+                    && request.resource.data.deadAt is number && request.resource.data.deadAt >= 0 && request.resource.data.deadAt <= 90
+                    && request.resource.data.name is string && request.resource.data.name.size() <= 20
+                    && request.resource.data.name == myName()
+                    && request.resource.data.pos is string && request.resource.data.pos.size() <= 4100
+                    && request.resource.data.sc is string && request.resource.data.sc.size() <= 600
+                    && request.resource.data.ts == request.time
+                    && expireOk(request.resource.data.expireAt, duration.value(15, 'd'))
+                    && (resource == null || resource.data.ts < request.time - duration.value(30, 's'));
+      allow delete: if false;
+    }
+
+    // Rating + record. Casual (client reported): every field is bounded, a match can move the rating by at most 40
+    // and add at most one game. `seen` is only used to read the server clock.
+    // Extra: the rating can only move together with exactly one new game, and wins/losses/draws can grow by at most
+    // one game per write, so a script can no longer "farm" rating by re-sending the same document.
+    function oldStat(f, dflt) { return resource == null ? dflt : resource.data.get(f, dflt); }
+    function newStat(f, dflt) { return request.resource.data.get(f, dflt); }
+    function clockOnly() {
+      return resource == null
+        ? request.resource.data.keys().hasOnly(['seen'])
+        : request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen']);
+    }
+    function matchOk() {
+      return (newStat('rating', 1000) == oldStat('rating', 1000) || newStat('games', 0) == oldStat('games', 0) + 1)
+          && newStat('wins', 0)   <= oldStat('wins', 0) + 1
+          && newStat('losses', 0) <= oldStat('losses', 0) + 1
+          && newStat('draws', 0)  <= oldStat('draws', 0) + 1
+          && (newStat('wins', 0) + newStat('losses', 0) + newStat('draws', 0))
+             <= (oldStat('wins', 0) + oldStat('losses', 0) + oldStat('draws', 0)) + 1;
+    }
+
+    match /mpstats/{uid} {
+      allow read: if request.auth != null;
+      allow create, update: if request.auth != null && request.auth.uid == uid
+                    && request.resource.data.keys().hasOnly(['rating', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'games', 'bestScore', 'seen', 'updatedAt'])
+                    && request.resource.data.get('rating', 1000) is number
+                    && request.resource.data.get('rating', 1000) >= 0 && request.resource.data.get('rating', 1000) <= 4000
+                    && request.resource.data.get('rating', 1000) - (resource == null ? 1000 : resource.data.get('rating', 1000)) <= 40
+                    && request.resource.data.get('rating', 1000) - (resource == null ? 1000 : resource.data.get('rating', 1000)) >= -40
+                    && request.resource.data.get('games', 0) is number
+                    && request.resource.data.get('games', 0) >= 0
+                    && request.resource.data.get('games', 0) <= (resource == null ? 0 : resource.data.get('games', 0)) + 1
+                    && request.resource.data.get('wins', 0) is number && request.resource.data.get('wins', 0) >= 0 && request.resource.data.get('wins', 0) <= 10000000
+                    && request.resource.data.get('losses', 0) is number && request.resource.data.get('losses', 0) >= 0 && request.resource.data.get('losses', 0) <= 10000000
+                    && request.resource.data.get('draws', 0) is number && request.resource.data.get('draws', 0) >= 0 && request.resource.data.get('draws', 0) <= 10000000
+                    && request.resource.data.get('streak', 0) is number && request.resource.data.get('streak', 0) >= 0 && request.resource.data.get('streak', 0) <= 10000000
+                    && request.resource.data.get('bestStreak', 0) is number && request.resource.data.get('bestStreak', 0) >= 0 && request.resource.data.get('bestStreak', 0) <= 10000000
+                    && request.resource.data.get('bestScore', 0) is number && request.resource.data.get('bestScore', 0) >= 0 && request.resource.data.get('bestScore', 0) <= 1000000
+                    && (!('seen' in request.resource.data) || request.resource.data.seen is timestamp)
+                    && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp)
+                    && (clockOnly() || matchOk());
+      allow delete: if false;
+    }
+  }
+}

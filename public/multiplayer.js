@@ -111,14 +111,15 @@ const age = (d) => { const t = tsMs(d && d.ts); return t ? nowSrv() - t : Infini
  * ------------------------------------------------------------------------ */
 function safeImg(u) {
   if (typeof u !== 'string' || u.length > 20000) return '';
-  return (/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(u) || /^https:\/\//.test(u)) ? u : '';
+  // SECURITY: same allow-list as firestore.rules. A rival can not make your browser load an image from a server of their choice.
+  return (/^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(u) || /^https:\/\/[a-z0-9-]+\.googleusercontent\.com\/[A-Za-z0-9_.\/=%~+-]*$/.test(u)) ? u : '';
 }
 function identity() {
   const u = auth.currentUser;
   if (!u || !bridge.isLoggedIn()) return null;
   let p = null;
   try { p = JSON.parse(lsGet('inchase_profile_v1') || 'null'); } catch (e) { p = null; }
-  if (!p || p.uid !== u.uid || !p.username) return null;
+  if (!p || p.uid !== u.uid || !/^[A-Za-z0-9_]{3,16}$/.test(String(p.username))) return null;
   return { uid: u.uid, name: cleanName(p.username), photo: safeImg(p.photoURL) };
 }
 // Google profile pictures are served as 96 px by default; the big VS screen asks for a larger copy of the same picture
@@ -130,7 +131,7 @@ function fillAvatar(d, who, hi) {
   d.textContent = '';
   if (who && who.photo) {
     const i = new Image();
-    i.alt = ''; i.draggable = false; i.decoding = 'sync';
+    i.alt = ''; i.draggable = false; i.decoding = 'sync'; i.referrerPolicy = 'no-referrer';
     i.src = hi ? hiRes(who.photo) : who.photo;
     d.appendChild(i);
   } else d.textContent = ((who && who.name) || '?').charAt(0).toUpperCase();
@@ -145,7 +146,7 @@ function avatar(size, who, hi) {
 // start downloading / decoding a photo early (while the clocks sync), so it is ready when the VS screen opens
 function warmPhoto(u) {
   if (!u) return;
-  try { const i = new Image(); i.src = hiRes(u); if (i.decode) i.decode().catch(() => {}); } catch (e) { /* ignore */ }
+  try { const i = new Image(); i.referrerPolicy = 'no-referrer'; i.src = hiRes(u); if (i.decode) i.decode().catch(() => {}); } catch (e) { /* ignore */ }
 }
 
 const DEFAULT_STATS = { rating: 1000, wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, games: 0, bestScore: 0 };

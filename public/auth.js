@@ -34,12 +34,25 @@ import {
   getDatabase, ref as dbRef, push as dbPush, set as dbSet, remove as dbRemove,
   onValue as dbOnValue, onDisconnect as dbOnDisconnect, goOffline as dbGoOffline, goOnline as dbGoOnline
 } from "https://www.gstatic.com/firebasejs/12.0.0/firebase-database.js";
-import { firebaseConfig } from "./firebase-config.js";
+import {
+  initializeAppCheck, ReCaptchaV3Provider
+} from "https://www.gstatic.com/firebasejs/12.0.0/firebase-app-check.js";
+import * as fbCfg from "./firebase-config.js";
+const firebaseConfig = fbCfg.firebaseConfig;
 
 /* ---------------------------------------------------------------------------
  * 0. Setup + helpers
  * ------------------------------------------------------------------------ */
 const app = initializeApp(firebaseConfig);
+// SECURITY: Firebase App Check. Put a reCAPTCHA v3 site key in firebase-config.js (appCheckSiteKey) and switch
+// enforcement on in the Firebase console: requests that do not come from your real site are then rejected by
+// Firestore / Realtime Database / Auth, so scripts and copied API keys stop working. Empty key = feature off.
+if (fbCfg.appCheckSiteKey) {
+  try {
+    if (location.hostname === 'localhost' || location.hostname === '127.0.0.1') self.FIREBASE_APPCHECK_DEBUG_TOKEN = true;
+    initializeAppCheck(app, { provider: new ReCaptchaV3Provider(fbCfg.appCheckSiteKey), isTokenAutoRefreshEnabled: true });
+  } catch (e) { console.warn('[auth] app check unavailable', e); }
+}
 isSupported().then((ok) => { if (ok) getAnalytics(app); }).catch(() => {});
 
 const auth = getAuth(app);
@@ -58,6 +71,23 @@ const EMAIL_KEY = 'inchase_email_for_signin';    // remembered between "send lin
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch (e) { return null; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
 const lsDel = (k) => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
+
+// SECURITY: a photo may only be a small data: image we made ourselves, or a Google profile picture. Anything else
+// (a tracking pixel on someone else's server, a huge file, a weird scheme) is dropped. firestore.rules enforces the same.
+const PHOTO_HTTPS = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com\/[A-Za-z0-9_.\/=%~+-]*$/;
+const PHOTO_DATA = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+\/=]+$/;
+function safePhoto(u, max) {
+  return (typeof u === 'string' && u.length <= (max || 20000) && (PHOTO_HTTPS.test(u) || PHOTO_DATA.test(u))) ? u : '';
+}
+const USERNAME_RE = /^[A-Za-z0-9_]{3,16}$/;
+function cleanBest(v) { const n = Math.floor(Number(v)); return Number.isFinite(n) ? Math.max(0, Math.min(1000000, n)) : 0; }
+function cleanRuns(a) {
+  return (Array.isArray(a) ? a : []).slice(0, 20).map((r) => ({
+    score: cleanBest(r && r.score),
+    wave: Math.max(0, Math.min(999, Math.floor(Number(r && r.wave)) || 0)),
+    mode: String((r && r.mode) || 'arcade').replace(/[^a-z0-9_-]/gi, '').slice(0, 16) || 'arcade'
+  }));
+}
 
 // Installed app (Microsoft Store / PWABuilder / "Install app"): popups and external browser hops are unreliable there.
 const IS_APP = (() => {
@@ -128,6 +158,8 @@ let tipFor = null;           // name element the hover card is currently showing
 try {
   const raw = lsGet(PROFILE_KEY);
   if (raw && lsGet(MODE_KEY) === 'user') profile = JSON.parse(raw);
+  if (profile && !(typeof profile === 'object' && typeof profile.uid === 'string' && USERNAME_RE.test(String(profile.username)))) profile = null;
+  if (profile) profile.photoURL = safePhoto(profile.photoURL);
 } catch (e) { profile = null; }
 
 /* ---------------------------------------------------------------------------
@@ -143,13 +175,14 @@ function renderAvatar(el, p) {
     el.style.color = '#0A0A0A';
     el.textContent = (p && p.username ? p.username[0] : '?').toUpperCase();
   };
-  if (p && p.photoURL) {
+  const shownPhoto = p ? safePhoto(p.photoURL) : '';
+  if (shownPhoto) {
     const img = new Image();
     img.alt = '';
     img.referrerPolicy = 'no-referrer';
     img.className = 'w-full h-full object-cover';
     img.onerror = letter;
-    img.src = p.photoURL;
+    img.src = shownPhoto;
     el.appendChild(img);
   } else {
     letter();
@@ -380,7 +413,7 @@ async function pushNow() {
   const d = App.getData();
   try {
     await setDoc(doc(db, 'users', currentUser.uid), {
-      best: d.best, total: d.total, runs: d.runs, light: d.light, ctrl: d.ctrl,
+      best: cleanBest(d.best), total: Math.max(0, Math.floor(Number(d.total)) || 0), runs: cleanRuns(d.runs), light: !!d.light, ctrl: (d.ctrl === 'stick' || d.ctrl === 'arrows') ? d.ctrl : null,
       updatedAt: serverTimestamp()
     }, { merge: true });
     log('cloud save ok');
@@ -408,16 +441,16 @@ function applyCloud(d, user) {
     needPush = true;
   } else {
     App.setData({
-      best: d.best,
-      total: d.total || (Array.isArray(d.runs) ? d.runs.length : 0),
-      runs: d.runs, light: d.light, ctrl: d.ctrl
+      best: cleanBest(d.best),
+      total: Math.max(0, Math.floor(Number(d.total)) || 0) || (Array.isArray(d.runs) ? d.runs.length : 0),
+      runs: cleanRuns(d.runs), light: d.light, ctrl: d.ctrl
     });
   }
   App.setUid(user.uid);
 }
 
 function finishLogin(user, username, photoURL, custom) {
-  profile = { uid: user.uid, username, photoURL: photoURL || '', custom: !!custom, email: user.email || '' };
+  profile = { uid: user.uid, username, photoURL: safePhoto(photoURL), custom: !!custom, email: user.email || '' };
   lsSet(PROFILE_KEY, JSON.stringify(profile));
   lsSet(MODE_KEY, 'user');
   updateAccountUI();
@@ -439,7 +472,7 @@ async function handleSignedIn(user) {
       const wasShown = profile && profile.uid === user.uid;
       // An uploaded photo wins over the Google one
       const custom = !!(d.customPhoto && typeof d.photoURL === 'string' && d.photoURL);
-      finishLogin(user, d.username, custom ? d.photoURL : (user.photoURL || ''), custom);
+      finishLogin(user, d.username, custom ? d.photoURL : safePhoto(user.photoURL), custom);
       if (!wasShown) toast('LOGGED IN AS #' + d.username);
     } else {
       await splashDone;
@@ -560,7 +593,7 @@ $('nameSaveBtn').addEventListener('click', async () => {
       if (u.exists() && u.data().username) throw new Error('already');
       tx.set(nameRef, { uid: user.uid, name, createdAt: serverTimestamp() });
       tx.set(userRef, {
-        username: name, usernameLower: lower, photoURL: user.photoURL || '',
+        username: name, usernameLower: lower, photoURL: safePhoto(user.photoURL),
         best: seed.best, total: seed.total, runs: seed.runs,
         light: local.light, ctrl: local.ctrl,
         createdAt: serverTimestamp(), updatedAt: serverTimestamp()
@@ -568,7 +601,7 @@ $('nameSaveBtn').addEventListener('click', async () => {
     });
     App.setUid(user.uid);
     App.setData({ best: seed.best, total: seed.total, runs: seed.runs, light: local.light, ctrl: local.ctrl });
-    finishLogin(user, name, user.photoURL || '', false);
+    finishLogin(user, name, safePhoto(user.photoURL), false);
     toast('WELCOME, #' + name);
   } catch (err) {
     console.warn('[auth] username claim failed', err);
@@ -610,7 +643,7 @@ window.addEventListener('keydown', (e) => {
  *  - Ties share a rank (1, 2, 2, 4 ...).
  * ------------------------------------------------------------------------ */
 // (function declarations on purpose: updateAccountUI() runs at startup, before this section is reached)
-function boardBest() { return Math.max(0, Math.floor(Number(App.getData().best) || 0)); }
+function boardBest() { return cleanBest(App.getData().best); }
 function boardSig(best) { return best + '|' + (profile ? profile.username + '|' + profile.photoURL : ''); }
 function boardRoots() { return Array.from(document.querySelectorAll('[data-lb]')); }
 
@@ -659,7 +692,7 @@ async function pushBoard(force) {
     await setDoc(doc(db, 'leaderboard', user.uid), {
       username: profile.username,
       usernameLower: profile.username.toLowerCase(),
-      photoURL: profile.photoURL || '',
+      photoURL: safePhoto(profile.photoURL),
       best,
       ...mpField(),
       updatedAt: serverTimestamp()
@@ -728,7 +761,7 @@ function addRows(docs) {
     Board.rows.push({
       uid: d.id,
       username: String(x.username || '?'),
-      photoURL: typeof x.photoURL === 'string' ? x.photoURL : '',
+      photoURL: safePhoto(x.photoURL),
       best,
       mpRating: mpFor(d.id, x.mpRating),
       rank: prev && prev.best === best ? prev.rank : Board.rows.length + 1
@@ -1177,7 +1210,7 @@ async function applyPhoto(dataUrl) {
   const user = currentUser;
   if (!user || !profile || profile.uid !== user.uid) throw new Error('nouser');
   const custom = !!dataUrl;
-  const photo = custom ? dataUrl : (user.photoURL || '');
+  const photo = custom ? dataUrl : safePhoto(user.photoURL);
   const best = boardBest();
   const batch = writeBatch(db);
   batch.set(doc(db, 'users', user.uid), { photoURL: photo, customPhoto: custom, updatedAt: serverTimestamp() }, { merge: true });
@@ -1271,7 +1304,7 @@ function fillDailyPhotos(seq) {
   if (!missing.length) return;
   Promise.all(missing.map((r) =>
     getDoc(doc(db, 'leaderboard', r.uid))
-      .then((s) => { dailyPhotos.set(r.uid, s.exists() && typeof (s.data() || {}).photoURL === 'string' ? s.data().photoURL : ''); })
+      .then((s) => { dailyPhotos.set(r.uid, s.exists() ? safePhoto((s.data() || {}).photoURL) : ''); })
       .catch(() => {})
   )).then(() => {
     if (seq !== Dly.seq) return;
@@ -1309,7 +1342,7 @@ function submitDaily() {
         score = Number((snap.data() || {}).score) || 0;        // already posted (earlier try or another device)
       } else {
         score = Math.max(0, Math.floor(Number(rec.score) || 0));
-        const photo = typeof profile.photoURL === 'string' && /^https?:/.test(profile.photoURL) && profile.photoURL.length <= 600 ? profile.photoURL : '';
+        const photo = safePhoto(profile.photoURL, 600);
         await setDoc(ref, {
           username: profile.username,
           usernameLower: profile.username.toLowerCase(),
@@ -1458,7 +1491,7 @@ function startDailyLive() {
       rows.push({
         uid: d.id,
         username: String(x.username || '?'),
-        photoURL: typeof x.photoURL === 'string' ? x.photoURL : '',
+        photoURL: safePhoto(x.photoURL, 600),
         best: score,
         rank: prev && prev.best === score ? prev.rank : rows.length + 1      // ties share a rank
       });

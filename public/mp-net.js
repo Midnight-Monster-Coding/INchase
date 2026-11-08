@@ -11,6 +11,21 @@
  * ========================================================================== */
 import { hasTurn } from './mp-core.js';
 
+/* SECURITY: the SDP comes from the other player through Firestore, so it is untrusted text. Only a small, plain, single
+   data-channel description with a DTLS fingerprint is accepted; anything else is refused before the browser parses it. */
+export function sanitizeSdp(s) {
+  if (typeof s !== 'string' || s.length < 50 || s.length > 12000) return null;
+  if (s.indexOf('v=0') !== 0) return null;
+  if (/[^\x09\x0a\x0d\x20-\x7e]/.test(s)) return null;                 // printable ASCII + line breaks only
+  const lines = s.split(/\r?\n/);
+  if (lines.length > 200) return null;
+  let cand = 0, media = 0;
+  for (const l of lines) { if (l.indexOf('a=candidate:') === 0) cand++; else if (l.indexOf('m=') === 0) media++; }
+  if (media !== 1 || cand > 40) return null;                                // one data-channel section, a sane number of routes
+  if (!/^m=application /m.test(s) || !/^a=fingerprint:/m.test(s)) return null;
+  return s;
+}
+
 const GATHER_MAX_MS = 5000;        // hard cap
 const NO_SERVER_MS = 400;          // no ICE server configured: only host candidates will ever come
 const QUIET_MS = 3000;             // servers configured but silent (blocked / slow): stop waiting this long after the first candidate
@@ -151,7 +166,9 @@ export class Peer {
 
   /** Guest: take the host's offer, return the answer SDP (candidates included). */
   async makeAnswer(offerSdp) {
-    await this.pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
+    const offer = sanitizeSdp(offerSdp);
+    if (!offer) throw new Error('bad-sdp');
+    await this.pc.setRemoteDescription({ type: 'offer', sdp: offer });
     await this.pc.setLocalDescription(await this.pc.createAnswer());
     await waitForGathering(this.pc, this.turn, this.hasServers);
     this._armConnectTimer();
@@ -160,7 +177,9 @@ export class Peer {
 
   /** Host: take the guest's answer. */
   async setAnswer(answerSdp) {
-    await this.pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+    const answer = sanitizeSdp(answerSdp);
+    if (!answer) throw new Error('bad-sdp');
+    await this.pc.setRemoteDescription({ type: 'answer', sdp: answer });
     this._armConnectTimer();
   }
 

@@ -361,6 +361,7 @@ export class OrbReferee {
     this.role = o.role;
     this.claims = new Map();    // n -> { h, g, hAt, gAt }
     this.next = 0;              // host: the next orb to settle
+    this.lastT = 0;             // host: match-clock time orb `next` appeared (= when the previous orb was taken)
     this.timer = null;
     this.dead = false;
     this.now = o.now || (() => performance.now());
@@ -407,6 +408,9 @@ export class OrbReferee {
     while (guard++ < 64) {
       const e = this.claims.get(this.next);
       if (!e) return;
+      // ANTI-CHEAT: orb n does not exist before orb n-1 was taken. A guest claim stamped earlier than that is impossible
+      // (a forged clock to win every orb), so it counts from the moment the orb really appeared.
+      if (e.g != null && e.g < this.lastT) e.g = this.lastT;
       let ready = false, waitMs = 0;
       if (e.h != null && e.g != null) ready = true;
       else if (e.h != null) {                         // only mine: a guest claim stamped earlier may still be on its way
@@ -425,6 +429,7 @@ export class OrbReferee {
       const t = w === 'h' ? e.h : e.g;
       this.claims.delete(n);
       this.next = n + 1;
+      this.lastT = t;
       this.o.send({ k: 'orb', n, w, t });
       this.o.onVerdict(n, w === 'h', t);
     }
