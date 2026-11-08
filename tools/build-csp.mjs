@@ -36,7 +36,8 @@ const FIREBASE_CONNECT = [
   'https://firestore.googleapis.com', 'https://identitytoolkit.googleapis.com', 'https://securetoken.googleapis.com',
   'https://firebaseinstallations.googleapis.com',
   'https://www.google-analytics.com', 'https://*.google-analytics.com', 'https://*.analytics.google.com', 'https://www.googletagmanager.com',
-  'https://inchase.jhonw3171.workers.dev'                                                // ICE-server worker (mp-config.js)
+  'https://inchase.jhonw3171.workers.dev',                                               // ICE-server worker (mp-config.js)
+  'https://inchase-score.jhonw3171.workers.dev'                                          // score worker (mp-config.js)
 ];
 
 const policy = [

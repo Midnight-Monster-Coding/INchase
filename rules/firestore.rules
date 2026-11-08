@@ -2,6 +2,10 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
+    // SERVER-OWNED DATA. The browser can never write: users.best, leaderboard.best, leaderboard.mpRating, mpstats
+    // rating/wins/losses/..., daily entries. Only the score Worker (service account, bypasses these rules) writes them.
+    // Server-only collections with no client access at all (default deny): runs, daily_started, mp_reports, mp_pairs,
+    // mp_rate, banned.
     // Everything not listed below is denied by default (there is deliberately no catch-all rule).
 
     // =====================================================================
@@ -49,14 +53,14 @@ service cloud.firestore {
     }
 
     // =====================================================================
-    // Private per-user profile + game history.
-    // Field checks apply only to the fields being written, so older documents with extra legacy fields keep saving.
+    // Private per-user profile.
+    // 'best' is SERVER-OWNED: a new account starts at zero and the browser can never change it afterwards.
+    // total / runs are display-only history (never used for ranking). The username can never change.
     // =====================================================================
     function userFieldsOk(d, ch) {
       return ch.hasOnly(['username', 'usernameLower', 'photoURL', 'customPhoto', 'best', 'total', 'runs', 'light', 'ctrl', 'createdAt', 'updatedAt'])
           && (!ch.hasAny(['photoURL'])    || validPhoto(d.photoURL, 20000))
           && (!ch.hasAny(['customPhoto']) || d.customPhoto is bool)
-          && (!ch.hasAny(['best'])        || (d.best is number && d.best >= 0 && d.best <= 1000000))
           && (!ch.hasAny(['total'])       || (d.total is number && d.total >= 0 && d.total <= 100000000))
           && (!ch.hasAny(['runs'])        || (d.runs is list && d.runs.size() <= 20))
           && (!ch.hasAny(['light'])       || d.light is bool)
@@ -69,86 +73,47 @@ service cloud.firestore {
                     && validName(request.resource.data.username)
                     && request.resource.data.usernameLower == request.resource.data.username.lower()
                     && getAfter(/databases/$(database)/documents/usernames/$(request.resource.data.usernameLower)).data.uid == request.auth.uid
+                    && request.resource.data.best == 0
+                    && request.resource.data.total == 0
+                    && request.resource.data.runs.size() == 0
                     && userFieldsOk(request.resource.data, request.resource.data.keys().toSet());
-      // The username can never change after creation (it used to be editable, which allowed free-form display names).
+      // 'best' and the username fields are NOT allowed here, so the browser can not change them.
       allow update: if isOwner(uid)
-                    && request.resource.data.usernameLower == resource.data.usernameLower
-                    && request.resource.data.username == resource.data.username
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['total', 'runs', 'light', 'ctrl', 'photoURL', 'customPhoto', 'updatedAt'])
                     && userFieldsOk(request.resource.data, request.resource.data.diff(resource.data).affectedKeys());
       allow delete: if false;
     }
 
     // =====================================================================
     // Public leaderboard entry (one doc per player).
-    // mpRating is optional (multiplayer rating, shown under the arcade best).
-    // NOTE: `best` is reported by the browser. These rules bound it, they cannot prove it. See SECURITY.md (server-side
-    // score checking) for the only real fix.
+    // The browser may create its row (name + photo) and later change only its photo.
+    // best and mpRating are written by the score Worker only.
     // =====================================================================
     match /leaderboard/{uid} {
       allow read: if request.auth != null;
-
-      // Full score write (arcade best etc.)
-      allow create, update: if request.auth != null && request.auth.uid == uid
-                    && request.resource.data.keys().hasOnly(['username', 'usernameLower', 'photoURL', 'best', 'updatedAt', 'mpRating'])
-                    && request.resource.data.keys().hasAll(['username', 'usernameLower', 'photoURL', 'best', 'updatedAt'])
+      allow create: if isOwner(uid)
+                    && request.resource.data.keys().hasOnly(['username', 'usernameLower', 'photoURL', 'best', 'updatedAt'])
+                    && request.resource.data.keys().hasAll(['username', 'usernameLower', 'photoURL', 'updatedAt'])
                     && validName(request.resource.data.username)
-                    && request.resource.data.usernameLower is string
-                    && request.resource.data.usernameLower.matches('^[a-z0-9_]{3,16}$')
+                    && request.resource.data.usernameLower == request.resource.data.username.lower()
                     && validPhoto(request.resource.data.photoURL, 20000)
-                    && request.resource.data.best is number
-                    && request.resource.data.best >= 0
-                    && request.resource.data.best <= 1000000
-                    && (!('mpRating' in request.resource.data)
-                        || (request.resource.data.mpRating is number
-                            && request.resource.data.mpRating >= 0
-                            && request.resource.data.mpRating <= 4000))
+                    && (!('best' in request.resource.data) || request.resource.data.best == 0)
                     && request.resource.data.updatedAt == request.time
-                    && get(/databases/$(database)/documents/users/$(uid)).data.username == request.resource.data.username
-                    && get(/databases/$(database)/documents/users/$(uid)).data.usernameLower == request.resource.data.usernameLower;
-
-      // Rating-only write: updateDoc(leaderboard/{uid}, { mpRating }). Changes nothing else.
-      allow update: if request.auth != null && request.auth.uid == uid
-                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['mpRating'])
-                    && request.resource.data.mpRating is number
-                    && request.resource.data.mpRating >= 0
-                    && request.resource.data.mpRating <= 4000;
-
+                    && get(/databases/$(database)/documents/users/$(uid)).data.username == request.resource.data.username;
+      allow update: if isOwner(uid)
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoURL', 'updatedAt'])
+                    && validPhoto(request.resource.data.photoURL, 20000)
+                    && request.resource.data.updatedAt == request.time;
       allow delete: if false;
     }
 
     // =====================================================================
-    // DAILY RUN ranks: daily/{dayNumber}/entries/{uid}  (one UTC day per path, so the board "resets" by itself)
-    // - Any signed-in player can read.
-    // - Create once, only for TODAY by the SERVER clock. No update, no delete.
-    // - The day check uses plain integer comparisons (no division / string() / float rounding).
+    // DAILY RUN ranks: daily/{dayNumber}/entries/{uid}. SERVER-OWNED: the score Worker writes the entry (one per player per
+    // day, after checking the run). The browser can only read.
     // =====================================================================
     match /daily/{day}/entries/{uid} {
       allow read: if request.auth != null;
-      allow create: if request.auth != null && request.auth.uid == uid
-                    && day.matches('^[0-9]{1,6}$')
-                    && request.time.toMillis() >= int(day) * 86400000
-                    && request.time.toMillis() < (int(day) + 1) * 86400000
-                    && request.resource.data.keys().hasOnly(['username', 'usernameLower', 'photoURL', 'score', 'wave', 'grid', 'day', 'createdAt', 'expireAt'])
-                    && request.resource.data.keys().hasAll(['username', 'usernameLower', 'photoURL', 'score', 'wave', 'grid', 'day', 'createdAt', 'expireAt'])
-                    && request.resource.data.day == int(day)
-                    && validName(request.resource.data.username)
-                    && request.resource.data.usernameLower is string
-                    && request.resource.data.usernameLower.matches('^[a-z0-9_]{3,16}$')
-                    && validPhoto(request.resource.data.photoURL, 600)
-                    && request.resource.data.score is number
-                    && request.resource.data.score >= 0
-                    && request.resource.data.score <= 1000000
-                    && request.resource.data.wave is number
-                    && request.resource.data.wave >= 1
-                    && request.resource.data.wave <= 300
-                    && request.resource.data.grid is string
-                    && request.resource.data.grid.size() <= 60
-                    && request.resource.data.grid.matches('^[GYR]*$')
-                    && request.resource.data.createdAt == request.time
-                    && expireOk(request.resource.data.expireAt, duration.value(4, 'd'))
-                    && get(/databases/$(database)/documents/users/$(uid)).data.username == request.resource.data.username
-                    && get(/databases/$(database)/documents/users/$(uid)).data.usernameLower == request.resource.data.usernameLower;
-      allow update, delete: if false;
+      allow write: if false;
     }
 
     // =====================================================================
@@ -282,46 +247,14 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // Rating + record. Casual (client reported): every field is bounded, a match can move the rating by at most 40
-    // and add at most one game. `seen` is only used to read the server clock.
-    // Extra: the rating can only move together with exactly one new game, and wins/losses/draws can grow by at most
-    // one game per write, so a script can no longer "farm" rating by re-sending the same document.
-    function oldStat(f, dflt) { return resource == null ? dflt : resource.data.get(f, dflt); }
-    function newStat(f, dflt) { return request.resource.data.get(f, dflt); }
-    function clockOnly() {
-      return resource == null
-        ? request.resource.data.keys().hasOnly(['seen'])
-        : request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen']);
-    }
-    function matchOk() {
-      return (newStat('rating', 1000) == oldStat('rating', 1000) || newStat('games', 0) == oldStat('games', 0) + 1)
-          && newStat('wins', 0)   <= oldStat('wins', 0) + 1
-          && newStat('losses', 0) <= oldStat('losses', 0) + 1
-          && newStat('draws', 0)  <= oldStat('draws', 0) + 1
-          && (newStat('wins', 0) + newStat('losses', 0) + newStat('draws', 0))
-             <= (oldStat('wins', 0) + oldStat('losses', 0) + oldStat('draws', 0)) + 1;
-    }
-
+    // Rating + record. SERVER-OWNED: the score Worker does the Elo after both players report the same result.
+    // The browser may only write the harmless 'seen' timestamp (used to read the server clock).
     match /mpstats/{uid} {
       allow read: if request.auth != null;
-      allow create, update: if request.auth != null && request.auth.uid == uid
-                    && request.resource.data.keys().hasOnly(['rating', 'wins', 'losses', 'draws', 'streak', 'bestStreak', 'games', 'bestScore', 'seen', 'updatedAt'])
-                    && request.resource.data.get('rating', 1000) is number
-                    && request.resource.data.get('rating', 1000) >= 0 && request.resource.data.get('rating', 1000) <= 4000
-                    && request.resource.data.get('rating', 1000) - (resource == null ? 1000 : resource.data.get('rating', 1000)) <= 40
-                    && request.resource.data.get('rating', 1000) - (resource == null ? 1000 : resource.data.get('rating', 1000)) >= -40
-                    && request.resource.data.get('games', 0) is number
-                    && request.resource.data.get('games', 0) >= 0
-                    && request.resource.data.get('games', 0) <= (resource == null ? 0 : resource.data.get('games', 0)) + 1
-                    && request.resource.data.get('wins', 0) is number && request.resource.data.get('wins', 0) >= 0 && request.resource.data.get('wins', 0) <= 10000000
-                    && request.resource.data.get('losses', 0) is number && request.resource.data.get('losses', 0) >= 0 && request.resource.data.get('losses', 0) <= 10000000
-                    && request.resource.data.get('draws', 0) is number && request.resource.data.get('draws', 0) >= 0 && request.resource.data.get('draws', 0) <= 10000000
-                    && request.resource.data.get('streak', 0) is number && request.resource.data.get('streak', 0) >= 0 && request.resource.data.get('streak', 0) <= 10000000
-                    && request.resource.data.get('bestStreak', 0) is number && request.resource.data.get('bestStreak', 0) >= 0 && request.resource.data.get('bestStreak', 0) <= 10000000
-                    && request.resource.data.get('bestScore', 0) is number && request.resource.data.get('bestScore', 0) >= 0 && request.resource.data.get('bestScore', 0) <= 1000000
-                    && (!('seen' in request.resource.data) || request.resource.data.seen is timestamp)
-                    && (!('updatedAt' in request.resource.data) || request.resource.data.updatedAt is timestamp)
-                    && (clockOnly() || matchOk());
+      allow create: if isOwner(uid) && request.resource.data.keys().hasOnly(['seen']) && request.resource.data.seen == request.time;
+      allow update: if isOwner(uid)
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['seen'])
+                    && request.resource.data.seen == request.time;
       allow delete: if false;
     }
   }

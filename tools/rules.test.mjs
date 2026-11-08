@@ -1,86 +1,52 @@
-/* INchase: rules.test.mjs  -- tests for rules/firestore.rules
- *
- * NOT RUN by the author (the sandbox could not download the Firebase emulator). Run it yourself before you deploy:
- *
+/* Emulator tests for rules/firestore.rules (server-owned scores). NOT RUN by the author: run them before you deploy.
  *   npm i -D @firebase/rules-unit-testing firebase
  *   npx firebase emulators:exec --only firestore "node tools/rules.test.mjs"
- *
- * Every line prints PASS or FAIL. Any FAIL means: do NOT deploy the rules yet, and send me that line.
- */
+ * Any FAIL = do not deploy the rules yet. */
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment, assertSucceeds, assertFails } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc, writeBatch, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 
-const env = await initializeTestEnvironment({
-  projectId: 'inchase-rules-test',
-  firestore: { rules: readFileSync(new URL('../rules/firestore.rules', import.meta.url), 'utf8'), host: '127.0.0.1', port: 8080 }
-});
-
+const env = await initializeTestEnvironment({ projectId: 'inchase-rules-test', firestore: { rules: readFileSync(new URL('../rules/firestore.rules', import.meta.url), 'utf8'), host: '127.0.0.1', port: 8080 } });
 let failed = 0;
-async function check(name, expectOk, fn) {
-  try { await (expectOk ? assertSucceeds(fn()) : assertFails(fn())); console.log('PASS  ' + name); }
-  catch (e) { failed++; console.log('FAIL  ' + name + '   ' + String(e.message || e).split('\n')[0]); }
-}
+const check = async (name, ok, fn) => { try { await (ok ? assertSucceeds(fn()) : assertFails(fn())); console.log('PASS  ' + name); } catch (e) { failed++; console.log('FAIL  ' + name + '   ' + String(e.message || e).split('\n')[0]); } };
 const GOOGLE = 'https://lh3.googleusercontent.com/a/ACg8ocJabc123=s96-c';
-const inOneHour = () => Timestamp.fromMillis(Date.now() + 3600e3);
 
-async function seedAlice() {
-  await env.clearFirestore();
-  await env.withSecurityRulesDisabled(async (ctx) => {
-    const db = ctx.firestore();
-    await setDoc(doc(db, 'usernames/alice'), { uid: 'u1', name: 'Alice', createdAt: new Date() });
-    await setDoc(doc(db, 'users/u1'), { username: 'Alice', usernameLower: 'alice', photoURL: '', best: 0, total: 0, runs: [], light: false, ctrl: null });
-  });
-}
-
-// ---------- accounts / usernames
 await env.clearFirestore();
-{
-  const db = env.authenticatedContext('u1').firestore();
-  await check('sign-up: username + profile claimed in one batch', true, () => {
-    const b = writeBatch(db);
-    b.set(doc(db, 'usernames/alice'), { uid: 'u1', name: 'Alice', createdAt: serverTimestamp() });
-    b.set(doc(db, 'users/u1'), { username: 'Alice', usernameLower: 'alice', photoURL: '', best: 0, total: 0, runs: [], light: false, ctrl: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-    return b.commit();
-  });
-  await check('hoarding: a second username for the same account is refused', false, () => setDoc(doc(db, 'usernames/bob'), { uid: 'u1', name: 'Bob', createdAt: serverTimestamp() }));
-}
-await seedAlice();
-{
-  const db = env.authenticatedContext('u1').firestore();
-  await check('profile: username can not be edited', false, () => updateDoc(doc(db, 'users/u1'), { username: 'AdminOfficial', updatedAt: serverTimestamp() }));
-  await check('profile: cloud save (best/runs) works', true, () => updateDoc(doc(db, 'users/u1'), { best: 500, total: 3, runs: [{ score: 500, wave: 4, mode: 'arcade' }], updatedAt: serverTimestamp() }));
-  await check('profile: more than 20 runs refused', false, () => updateDoc(doc(db, 'users/u1'), { runs: Array.from({ length: 21 }, () => ({ score: 1, wave: 1, mode: 'arcade' })), updatedAt: serverTimestamp() }));
-  await check('profile: tracking-pixel photo refused', false, () => updateDoc(doc(db, 'users/u1'), { photoURL: 'https://evil.example/pixel.png', updatedAt: serverTimestamp() }));
-  await check('profile: Google photo accepted', true, () => updateDoc(doc(db, 'users/u1'), { photoURL: GOOGLE, updatedAt: serverTimestamp() }));
-  await check('profile: someone else cannot read it', false, () => getDoc(doc(env.authenticatedContext('u2').firestore(), 'users/u1')));
+let db = env.authenticatedContext('u1').firestore();
+await check('sign-up: username + profile at zero', true, () => { const b = writeBatch(db);
+  b.set(doc(db, 'usernames/alice'), { uid: 'u1', name: 'Alice', createdAt: serverTimestamp() });
+  b.set(doc(db, 'users/u1'), { username: 'Alice', usernameLower: 'alice', photoURL: '', best: 0, total: 0, runs: [], light: false, ctrl: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  return b.commit(); });
+await check('sign-up with a pre-filled best (guest score import) is refused', false, () => { const d2 = env.authenticatedContext('u2').firestore(); const b = writeBatch(d2);
+  b.set(doc(d2, 'usernames/bob'), { uid: 'u2', name: 'Bob', createdAt: serverTimestamp() });
+  b.set(doc(d2, 'users/u2'), { username: 'Bob', usernameLower: 'bob', photoURL: '', best: 999999, total: 0, runs: [], light: false, ctrl: null, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  return b.commit(); });
 
-  // ---------- leaderboard
-  const lb = (over) => ({ username: 'Alice', usernameLower: 'alice', photoURL: '', best: 1200, updatedAt: serverTimestamp(), ...over });
-  await check('leaderboard: normal write', true, () => setDoc(doc(db, 'leaderboard/u1'), lb({})));
-  await check('leaderboard: score above 1,000,000 refused', false, () => setDoc(doc(db, 'leaderboard/u1'), lb({ best: 2000000 })));
-  await check('leaderboard: external photo URL refused', false, () => setDoc(doc(db, 'leaderboard/u1'), lb({ photoURL: 'http://evil.example/x.png' })));
-  await check('leaderboard: name that is not my username refused', false, () => setDoc(doc(db, 'leaderboard/u1'), lb({ username: 'Bob', usernameLower: 'bob' })));
-  await check('leaderboard: rating-only update', true, () => updateDoc(doc(db, 'leaderboard/u1'), { mpRating: 1024 }));
+console.log('--- the browser can no longer write server-owned fields');
+await check('console: users.best = 999999 refused', false, () => updateDoc(doc(db, 'users/u1'), { best: 999999, updatedAt: serverTimestamp() }));
+await check('profile: history / settings still save', true, () => updateDoc(doc(db, 'users/u1'), { total: 3, runs: [{ score: 10, wave: 1, mode: 'arcade' }], light: true, ctrl: 'stick', updatedAt: serverTimestamp() }));
+await check('profile: username can not change', false, () => updateDoc(doc(db, 'users/u1'), { username: 'Admin', updatedAt: serverTimestamp() }));
+await check('profile: tracking-pixel photo refused', false, () => updateDoc(doc(db, 'users/u1'), { photoURL: 'https://evil.example/p.png', updatedAt: serverTimestamp() }));
+await check('profile: Google photo accepted', true, () => updateDoc(doc(db, 'users/u1'), { photoURL: GOOGLE, updatedAt: serverTimestamp() }));
 
-  // ---------- multiplayer
-  await check('mp code: own name', true, () => setDoc(doc(db, 'mp_codes/ABC234'), { host: 'u1', name: 'Alice', state: 'open', ts: serverTimestamp(), expireAt: inOneHour() }));
-  await check('mp code: pretending to be another player refused', false, () => setDoc(doc(db, 'mp_codes/XYZ789'), { host: 'u1', name: 'Bob', state: 'open', ts: serverTimestamp(), expireAt: inOneHour() }));
-  await check('mp code: expireAt a year ahead refused', false, () => setDoc(doc(db, 'mp_codes/QWE456'), { host: 'u1', name: 'Alice', state: 'open', ts: serverTimestamp(), expireAt: Timestamp.fromMillis(Date.now() + 365 * 864e5) }));
+const row = (o) => ({ username: 'Alice', usernameLower: 'alice', photoURL: '', updatedAt: serverTimestamp(), ...o });
+await check('leaderboard: create row with best 1000 refused', false, () => setDoc(doc(db, 'leaderboard/u1'), row({ best: 1000 })));
+await check('leaderboard: create row (name + photo, no score)', true, () => setDoc(doc(db, 'leaderboard/u1'), row({})));
+await check('leaderboard: console best = 999999 refused', false, () => setDoc(doc(db, 'leaderboard/u1'), row({ best: 999999 }), { merge: true }));
+await check('leaderboard: console mpRating = 4000 refused', false, () => updateDoc(doc(db, 'leaderboard/u1'), { mpRating: 4000 }));
+await check('leaderboard: re-sending the same name/photo (what the game does) works', true, () => setDoc(doc(db, 'leaderboard/u1'), row({}), { merge: true }));
+await check('leaderboard: changing photo works', true, () => setDoc(doc(db, 'leaderboard/u1'), row({ photoURL: GOOGLE }), { merge: true }));
+await check('leaderboard: name that is not mine refused', false, () => setDoc(doc(db, 'leaderboard/u1'), row({ username: 'Bob', usernameLower: 'bob' }), { merge: true }));
 
-  const base = { rating: 1000, wins: 0, losses: 0, draws: 0, streak: 0, bestStreak: 0, games: 0, bestScore: 0 };
-  await check('mpstats: clock read (seen only)', true, () => setDoc(doc(db, 'mpstats/u1'), { seen: serverTimestamp() }, { merge: true }));
-  await check('mpstats: first match, +24 with one new game', true, () => setDoc(doc(db, 'mpstats/u1'), { ...base, rating: 1024, wins: 1, games: 1, updatedAt: serverTimestamp() }, { merge: true }));
-  await check('mpstats: rating moves WITHOUT a new game refused', false, () => setDoc(doc(db, 'mpstats/u1'), { rating: 1048, updatedAt: serverTimestamp() }, { merge: true }));
-  await check('mpstats: +100 wins in one write refused', false, () => setDoc(doc(db, 'mpstats/u1'), { wins: 101, games: 2, rating: 1024, updatedAt: serverTimestamp() }, { merge: true }));
-  await check('mpstats: second match, -12 with one new game', true, () => setDoc(doc(db, 'mpstats/u1'), { rating: 1012, losses: 1, games: 2, updatedAt: serverTimestamp() }, { merge: true }));
+await check('mpstats: console rating write refused', false, () => setDoc(doc(db, 'mpstats/u1'), { rating: 1040, games: 1, updatedAt: serverTimestamp() }, { merge: true }));
+await check('mpstats: clock read (seen) works', true, () => setDoc(doc(db, 'mpstats/u1'), { seen: serverTimestamp() }, { merge: true }));
+await check('mpstats: anyone can read ratings', true, () => getDoc(doc(env.authenticatedContext('u2').firestore(), 'mpstats/u1')));
 
-  // ---------- ghosts
-  const ghost = { band: 1, seed: 7, score: 900, deadAt: 0, name: 'Alice', pos: 'AAAAAAAA', sc: 'AAAA', ts: serverTimestamp(), expireAt: Timestamp.fromMillis(Date.now() + 14 * 864e5) };
-  await check('ghost: first upload', true, () => setDoc(doc(db, 'mp_ghosts/b1_0'), ghost));
-  await check('ghost: overwriting the same slot again right away refused', false, () => setDoc(doc(db, 'mp_ghosts/b1_0'), { ...ghost, ts: serverTimestamp() }));
-}
+await check('daily: console entry refused', false, () => setDoc(doc(db, 'daily/20000/entries/u1'), { username: 'Alice', score: 999999 }));
+await check('daily: players can read the board', true, () => getDoc(doc(db, 'daily/20000/entries/u1')));
+for (const c of ['runs/x', 'daily_started/20000_u1', 'mp_reports/abc', 'mp_pairs/a_b_1', 'mp_rate/u1_1', 'banned/u1'])
+  await check('server-only collection ' + c + ': no access', false, () => setDoc(doc(db, c), { a: 1 }));
+await check('server-only: reads refused too', false, () => getDoc(doc(db, 'banned/u1')));
 
 console.log(failed ? `\n${failed} test(s) FAILED: do not deploy the rules yet.` : '\nAll rule tests passed.');
-await env.cleanup();
-process.exit(failed ? 1 : 0);
+await env.cleanup(); process.exit(failed ? 1 : 0);

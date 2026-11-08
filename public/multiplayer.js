@@ -756,7 +756,8 @@ function newMatch(kind, role, expectUid) {
   const M = {
     id: ++Z.matchSeq, kind, role, expectUid, peer: null, phase: 'connect', opp: { name: '?', uid: '', photo: '', rating: 0, band: 0 },
     ghost: null, series: { me: 0, opp: 0 }, rematch: { me: false, opp: false }, skew: 0, offset: 0, route: '',
-    gotHello: false, timers: [], tickId: 0, helloTimer: 0, peerClosed: false, seed: 0, startPerf: 0
+    gotHello: false, timers: [], tickId: 0, helloTimer: 0, peerClosed: false, seed: 0, startPerf: 0,
+    pendingSeed: 0, startAcked: false
   };
   resetRound(M);
   Z.match = M;
@@ -849,10 +850,22 @@ function onCtl(M, m) {
       const now = performance.now();
       if (!Number.isFinite(startPerf) || startPerf - now > 20000) startPerf = now + 7900;
       if (startPerf - now < 3600) startPerf = now + 3600;
+      // Tell the host exactly which startPerf I'm using (translated back into ITS clock), even when
+      // the clamp above fired, so both devices run the shared drone field from the same time origin.
+      M.peer.send({ k: 'startAck', t: startPerf + M.offset });
       const sr = m.sr || {};
       M.series = { me: Math.round(num(sr.opp, 0, 999, 0)), opp: Math.round(num(sr.me, 0, 999, 0)) };
       M.mid = String(m.mid || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40);
       beginRound(M, seed, startPerf);
+      break;
+    }
+    case 'startAck': {
+      if (M.role !== 'host' || M.startAcked) return;
+      const t = Number(m.t);
+      const now = performance.now();
+      if (!Number.isFinite(t) || Math.abs(t - now) > 30000) return;   // bogus value: let the fallback timer start us instead
+      M.startAcked = true;
+      beginRound(M, M.pendingSeed >>> 0, t);
       break;
     }
     case 'claim': if (M.orb && M.role === 'host') M.orb.guestClaim(m); break;      // guest touched the orb (host settles it)
@@ -908,8 +921,17 @@ function hostStart(M) {
   const t0 = performance.now() + (MP.VS_SEC + 0.3 + MP.COUNTDOWN_SEC) * 1000;
   // one match id per round: both players report the result under it, the score Worker checks the two reports agree
   M.mid = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+  M.pendingSeed = seed;
+  M.startAcked = false;
   M.peer.send({ k: 'start', seed, t0, sr: M.series, mid: M.mid });
-  beginRound(M, seed, t0);
+  // The guest may have had to clamp its own startPerf if clock sync came out noisy; it echoes back
+  // whichever value it actually used (translated into MY clock) so we never run the same seeded
+  // world from two different time origins. Fall back to our own t0 if the ack never arrives.
+  M.timers.push(setTimeout(() => {
+    if (Z.match !== M || M.startAcked) return;
+    M.startAcked = true;
+    beginRound(M, seed, t0);
+  }, 1500));
 }
 function startGhostMatch(g) {
   const M = newMatch('ghost', 'host', null);
